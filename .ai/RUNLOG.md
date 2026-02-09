@@ -60,3 +60,15 @@ API header spot-checks (local):
 - No key configured: `/api/search?q=hello` returns `503` with `Cache-Control: private, no-store`.
 - BYO key header: `/api/search?q=hello` returns `503` (with invalid key) and is still `private, no-store`.
 - Server key set but upstream error: returns `503` with `CDN-Cache-Control: s-maxage=60`.
+
+## GitHub/Vercel Provisioning (pending auth)
+
+```bash
+git remote add origin git@github.com:khalidsaidi/reality-mode-search.git
+git push -u origin main
+```
+
+Notes:
+- Push failed in this environment due to missing SSH credentials and because the GitHub repo did not yet exist.
+- Next step is to create the GitHub repo (public) and authenticate (PAT or SSH key), then push.
+- After push, import into Vercel and set env vars.
