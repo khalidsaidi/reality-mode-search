@@ -1,0 +1,9 @@
+.env.local
+.env.*.local
+
+.vercel
+node_modules
+
+# Optional internal audit artifacts (keep .ai/*.md tracked)
+.ai/audit/**
+
