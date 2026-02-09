@@ -15,7 +15,7 @@ export function TooltipTrigger({
 }: {
   asChild?: boolean;
   title: string;
-  children: React.ReactElement;
+  children: React.ReactElement<{ title?: string }>;
 }) {
   if (!asChild) return <span title={title}>{children}</span>;
   return React.cloneElement(children, { title });
@@ -24,4 +24,3 @@ export function TooltipTrigger({
 export function TooltipContent() {
   return null;
 }
-

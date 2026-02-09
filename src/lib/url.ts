@@ -35,11 +35,17 @@ export function dedupByCanonicalUrl<T extends { url: string }>(results: readonly
   const seen = new Set<string>();
   const out: T[] = [];
   for (const r of results) {
-    const canon = canonicalizeUrl(r.url);
+    const raw = (r.url ?? "").trim();
+    if (!raw) {
+      // No URL to key on; keep as-is to avoid "filtering" results.
+      out.push(r);
+      continue;
+    }
+
+    const canon = canonicalizeUrl(raw) || raw;
     if (seen.has(canon)) continue;
     seen.add(canon);
     out.push(r);
   }
   return out;
 }
-

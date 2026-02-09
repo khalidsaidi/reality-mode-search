@@ -3,7 +3,11 @@
 
 .vercel
 node_modules
+.next
+*.tsbuildinfo
+
+# Local tooling secrets (never commit)
+.ai/.secret
 
 # Optional internal audit artifacts (keep .ai/*.md tracked)
 .ai/audit/**
-

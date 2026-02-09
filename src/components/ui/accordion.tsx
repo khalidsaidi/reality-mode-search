@@ -17,13 +17,13 @@ export const AccordionItem = React.forwardRef<HTMLDetailsElement, AccordionItemP
   return <details ref={ref} className={cn("rounded-lg border bg-card", className)} {...props} />;
 });
 
-export const AccordionTrigger = React.forwardRef<HTMLElement, React.HTMLAttributes<HTMLElement>>(function AccordionTrigger(
-  { className, ...props },
-  ref
-) {
+export const AccordionTrigger = React.forwardRef<
+  React.ElementRef<"summary">,
+  React.ComponentPropsWithoutRef<"summary">
+>(function AccordionTrigger({ className, ...props }, ref) {
   return (
     <summary
-      ref={ref as any}
+      ref={ref}
       className={cn(
         "cursor-pointer list-none px-4 py-3 text-sm font-medium",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
@@ -39,4 +39,3 @@ export const AccordionContent = React.forwardRef<HTMLDivElement, React.HTMLAttri
     return <div ref={ref} className={cn("px-4 pb-4 text-sm text-muted-foreground", className)} {...props} />;
   }
 );
-

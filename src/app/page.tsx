@@ -47,7 +47,7 @@ export default function HomePage() {
       }
 
       setData(json as SearchResponse);
-    } catch (e: any) {
+    } catch {
       setData(null);
       setError({ status: 0, message: "Network error." });
     } finally {

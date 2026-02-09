@@ -22,14 +22,18 @@ export function ResultsList({ results }: { results: SearchResult[] }) {
         <Card key={`${r.url}-${idx}`}>
           <CardHeader className="space-y-2">
             <CardTitle className="text-base">
-              <a
-                href={r.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline decoration-transparent underline-offset-4 hover:decoration-current"
-              >
-                {r.title || r.url}
-              </a>
+              {r.url ? (
+                <a
+                  href={r.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline decoration-transparent underline-offset-4 hover:decoration-current"
+                >
+                  {r.title || r.url}
+                </a>
+              ) : (
+                <span>{r.title || "(missing url)"}</span>
+              )}
             </CardTitle>
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               <span className="truncate">{r.display_url || r.domain}</span>
@@ -46,4 +50,3 @@ export function ResultsList({ results }: { results: SearchResult[] }) {
     </div>
   );
 }
-

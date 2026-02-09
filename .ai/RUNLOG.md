@@ -35,3 +35,28 @@ npm run dev
    - Response should be `Cache-Control: private, no-store` and must not be cached.
 
 TODO: Add deployed URL + exact curl commands after first deploy.
+
+### Executed In This Environment (Node available)
+
+```bash
+node -v
+npm -v
+
+npm install
+npm run lint
+npm run typecheck
+npm test
+npm run build
+```
+
+Start verification:
+
+```bash
+PORT=3005 npm run start -- -p 3005
+curl http://localhost:3005/api/healthz
+```
+
+API header spot-checks (local):
+- No key configured: `/api/search?q=hello` returns `503` with `Cache-Control: private, no-store`.
+- BYO key header: `/api/search?q=hello` returns `503` (with invalid key) and is still `private, no-store`.
+- Server key set but upstream error: returns `503` with `CDN-Cache-Control: s-maxage=60`.

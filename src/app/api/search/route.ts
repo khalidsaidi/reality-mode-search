@@ -81,6 +81,11 @@ type BraveWebResult = {
   display_url?: string;
 };
 
+type BraveSearchResponse = {
+  web?: { results?: BraveWebResult[] };
+  results?: BraveWebResult[];
+};
+
 function asString(v: unknown): string {
   return typeof v === "string" ? v : "";
 }
@@ -116,9 +121,9 @@ async function braveSearch(params: { q: string; country?: CountryCode; key: stri
       });
 
       const text = await res.text();
-      let data: any = null;
+      let data: unknown = null;
       try {
-        data = text ? JSON.parse(text) : null;
+        data = text ? (JSON.parse(text) as unknown) : null;
       } catch {
         data = null;
       }
@@ -219,7 +224,8 @@ export async function GET(req: NextRequest) {
     return res;
   }
 
-  const webResults: BraveWebResult[] = upstream.data?.web?.results ?? upstream.data?.results ?? [];
+  const braveData = upstream.data as BraveSearchResponse | null;
+  const webResults: BraveWebResult[] = braveData?.web?.results ?? braveData?.results ?? [];
 
   const mapped: SearchResult[] = webResults.map((r) => {
     const url = asString(r.url);
@@ -234,9 +240,8 @@ export async function GET(req: NextRequest) {
     return { title, url, snippet, display_url, domain, tld, country_inferred, lang_detected };
   });
 
-  const withUrls = mapped.filter((r) => !!r.url);
-  const deduped = dedupByCanonicalUrl(withUrls);
-  const dedupedCount = withUrls.length - deduped.length;
+  const deduped = dedupByCanonicalUrl(mapped);
+  const dedupedCount = mapped.length - deduped.length;
 
   const response: SearchResponse = {
     query: qRaw,
