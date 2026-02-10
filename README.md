@@ -44,3 +44,16 @@ Set in Vercel (or `.env.local` locally):
 2. The second response should be served from cache (look for `x-vercel-cache=HIT` on Vercel).
 
 BYO key requests should never be cached (they are `private, no-store`).
+
+## Connect GitHub to Vercel
+
+1. In Vercel Dashboard: Add New Project -> Import Git Repository -> select `khalidsaidi/reality-mode-search`.
+2. Set Production Branch to `main` (default).
+3. Deploy. Future `git push` to `main` should trigger production deployments automatically.
+
+CLI alternative (requires the GitHub integration connected in Vercel):
+
+```bash
+vercel link --yes --project reality-mode-search
+vercel git connect https://github.com/khalidsaidi/reality-mode-search.git
+```
