@@ -34,7 +34,7 @@ npm run dev
    - Call `/api/search?q=hello` with `x-user-brave-key`.
    - Response should be `Cache-Control: private, no-store` and must not be cached.
 
-TODO: Add deployed URL + exact curl commands after first deploy.
+Deployed URL and exact verification commands are recorded in the 2026-02-10 section below.
 
 ### Executed In This Environment (Node available)
 
