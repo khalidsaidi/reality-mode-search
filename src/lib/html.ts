@@ -1,33 +1,12 @@
-export type StrongSegment = { text: string; strong: boolean };
+import he from "he";
 
-const NAMED_ENTITIES: Record<string, string> = {
-  quot: "\"",
-  apos: "'",
-  amp: "&",
-  lt: "<",
-  gt: ">",
-  nbsp: " "
-};
+export type StrongSegment = { text: string; strong: boolean };
 
 export function decodeHtmlEntities(input: string): string {
   if (!input) return "";
-
-  return input.replace(/&(#x[0-9a-fA-F]+|#\d+|[a-zA-Z][a-zA-Z0-9]+);/g, (m, entity: string) => {
-    if (entity[0] === "#") {
-      const hex = entity[1]?.toLowerCase() === "x";
-      const numStr = hex ? entity.slice(2) : entity.slice(1);
-      const codePoint = Number.parseInt(numStr, hex ? 16 : 10);
-      if (!Number.isFinite(codePoint) || codePoint < 0 || codePoint > 0x10ffff) return m;
-      try {
-        return String.fromCodePoint(codePoint);
-      } catch {
-        return m;
-      }
-    }
-
-    const named = NAMED_ENTITIES[entity];
-    return typeof named === "string" ? named : m;
-  });
+  // `he` is a mature HTML entity decoder; keep it narrow: decode entities only,
+  // then handle tags separately with a strict allowlist.
+  return he.decode(input).replace(/\u00a0/g, " ");
 }
 
 // Convert small HTML snippets into React-safe segments:
