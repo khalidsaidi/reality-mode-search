@@ -184,6 +184,29 @@ Observed:
 - `Cache-Control: private, no-store`
 - No `CDN-Cache-Control` header
 
+### Global Baseline (No Geo Lock-In)
+
+Brave Web Search API defaults the `country` parameter to `US` when omitted. To make the default behavior truly worldwide, the backend forces `country=ALL` for requests that do not specify a country hint.
+
+Provider note:
+- Brave only supports a subset of country codes (+ `ALL`) for the `country` parameter; unsupported ISO codes are ignored (fallback to `ALL`) instead of erroring.
+
+Verification:
+
+```bash
+# Purge shared cache so old US-default entries don't persist.
+vercel cache purge --type cdn --yes
+
+# Server-key path (cached): should match Brave country=ALL and cache on repeat.
+curl -sS "https://reality-mode-search.vercel.app/api/search?q=football" | jq -r '.results[0:10][].url'
+
+# BYO path (no-store): should match Brave country=ALL and never cache.
+curl -sS -H "x-user-brave-key: $BRAVE_API_KEY" "https://reality-mode-search.vercel.app/api/search?q=football" | jq -r '.results[0:10][].url'
+
+# Direct Brave call for comparison.
+curl -sS -H "X-Subscription-Token: $BRAVE_API_KEY" "https://api.search.brave.com/res/v1/web/search?q=football&count=20&country=ALL" | jq -r '.web.results[0:10][].url'
+```
+
 ### Local Behavior Checks
 
 Rate limit (30 req/hour/IP):
