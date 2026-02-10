@@ -19,6 +19,50 @@ const DEFAULT_SWR_SECONDS = 0;
 const DEFAULT_STALE_IF_ERROR_SECONDS = 604800; // 7 days
 const DEFAULT_DAILY_MISS_BUDGET = 1500;
 
+// Brave Web Search "country" defaults to US if omitted; use "ALL" for a truly worldwide baseline.
+type BraveSearchCountry = CountryCode | "ALL";
+const BRAVE_GLOBAL_COUNTRY: BraveSearchCountry = "ALL";
+const BRAVE_SUPPORTED_COUNTRIES = new Set<string>([
+  "AR",
+  "AU",
+  "AT",
+  "BE",
+  "BR",
+  "CA",
+  "CL",
+  "DK",
+  "FI",
+  "FR",
+  "DE",
+  "GR",
+  "HK",
+  "IN",
+  "ID",
+  "IT",
+  "JP",
+  "KR",
+  "MY",
+  "MX",
+  "NL",
+  "NZ",
+  "NO",
+  "CN",
+  "PL",
+  "PT",
+  "PH",
+  "RU",
+  "SA",
+  "ZA",
+  "ES",
+  "SE",
+  "CH",
+  "TW",
+  "TR",
+  "GB",
+  "US",
+  "ALL",
+]);
+
 let serverKeyDailyMissState: { date: string; misses: number } = { date: "", misses: 0 };
 
 function getBuildSha(): string {
@@ -116,11 +160,11 @@ function deriveDisplayUrl(urlStr: string): string {
   }
 }
 
-async function braveSearch(params: { q: string; country?: CountryCode; key: string }) {
+async function braveSearch(params: { q: string; country: BraveSearchCountry; key: string }) {
   const url = new URL("https://api.search.brave.com/res/v1/web/search");
   url.searchParams.set("q", params.q);
   url.searchParams.set("count", "20");
-  if (params.country) url.searchParams.set("country", params.country);
+  url.searchParams.set("country", params.country);
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
@@ -177,10 +221,14 @@ export async function GET(req: NextRequest) {
 
   const countryRaw = reqUrl.searchParams.get("country");
   const countryUpper = countryRaw ? countryRaw.toUpperCase() : null;
-  const countryHint =
+  const countryHintRequested =
     countryUpper && (ISO_COUNTRY_CODES as readonly string[]).includes(countryUpper)
       ? (countryUpper as CountryCode)
       : null;
+  // Provider constraint: Brave only supports a subset of country codes plus "ALL".
+  // If the user selects an unsupported ISO code, ignore it (robust "reality mode").
+  const countryHint =
+    countryHintRequested && BRAVE_SUPPORTED_COUNTRIES.has(countryHintRequested) ? countryHintRequested : null;
 
   const enableByo = envBool("ENABLE_BYO_KEY", true);
   const userKey = enableByo ? (req.headers.get("x-user-brave-key") ?? "").trim() : "";
@@ -227,7 +275,8 @@ export async function GET(req: NextRequest) {
     serverKeyDailyMissState.misses += 1;
   }
 
-  const upstream = await braveSearch({ q: normalizedQ, country: countryHint ?? undefined, key: keyToUse });
+  const upstreamCountry: BraveSearchCountry = countryHint ?? BRAVE_GLOBAL_COUNTRY;
+  const upstream = await braveSearch({ q: normalizedQ, country: upstreamCountry, key: keyToUse });
 
   // Upstream errors: treat as 503. Server key gets a short CDN cache to avoid hammering.
   if (!upstream.ok) {
