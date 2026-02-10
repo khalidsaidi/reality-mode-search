@@ -18,7 +18,7 @@ export default function HomePage() {
   } | null>(null);
   const [data, setData] = React.useState<SearchResponse | null>(null);
 
-  const runSearch = React.useCallback(async ({ normalizedQuery, countryHint, userBraveKey }: SearchFormSubmit) => {
+  const runSearch = React.useCallback(async ({ normalizedQuery, countryHint, langHint, userBraveKey }: SearchFormSubmit) => {
     setLoading(true);
     setError(null);
 
@@ -26,6 +26,7 @@ export default function HomePage() {
       const url = new URL("/api/search", window.location.origin);
       url.searchParams.set("q", normalizedQuery);
       if (countryHint) url.searchParams.set("country", countryHint);
+      if (langHint) url.searchParams.set("lang", langHint);
 
       const res = await fetch(url.toString(), {
         method: "GET",
@@ -101,6 +102,10 @@ export default function HomePage() {
                 <div>
                   <span className="text-muted-foreground">country_hint:</span>{" "}
                   <span className="font-mono text-xs">{data.lens.country_hint ?? "null"}</span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">lang_hint:</span>{" "}
+                  <span className="font-mono text-xs">{data.lens.lang_hint ?? "null"}</span>
                 </div>
                 <div>
                   <span className="text-muted-foreground">search_lang:</span>{" "}

@@ -234,6 +234,7 @@ Brave Web Search defaults `search_lang` to `en` when omitted. This can make “W
 
 - Infers `search_lang` from the query language (franc ISO-639-3 -> Brave enum), when possible.
 - Falls back to `en` and always sends an explicit `search_lang`.
+- Supports `lang=all` to omit the language hint (provider default), and `lang=<code>` for an explicit language.
 
 Local verification:
 
@@ -248,4 +249,11 @@ Deployed verification (purge cache first, since server-key responses are CDN-cac
 vercel cache purge --type cdn --yes
 curl -sS -D - "https://reality-mode-search.vercel.app/api/search?q=plage%20david" -o /tmp/rms_plage_david.json
 cat /tmp/rms_plage_david.json | jq '.lens, .reality.histograms.lang_detected[0:5]'
+```
+
+Compare with no hint:
+
+```bash
+vercel cache purge --type cdn --yes
+curl -sS "https://reality-mode-search.vercel.app/api/search?q=plage%20david&lang=all" | jq '.lens, .reality.histograms.lang_detected[0:5]'
 ```

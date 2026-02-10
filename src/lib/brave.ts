@@ -62,6 +62,66 @@ export const BRAVE_SEARCH_LANGS = [
 
 export type BraveSearchLang = (typeof BRAVE_SEARCH_LANGS)[number];
 
+export const BRAVE_SEARCH_LANG_SET = new Set<string>(BRAVE_SEARCH_LANGS as readonly string[]);
+
+export function isBraveSearchLang(v: string): v is BraveSearchLang {
+  return BRAVE_SEARCH_LANG_SET.has(v);
+}
+
+export const BRAVE_SEARCH_LANG_NAME_BY_CODE = {
+  ar: "Arabic",
+  eu: "Basque",
+  bn: "Bengali",
+  bg: "Bulgarian",
+  ca: "Catalan",
+  "zh-hans": "Chinese (Simplified)",
+  "zh-hant": "Chinese (Traditional)",
+  hr: "Croatian",
+  cs: "Czech",
+  da: "Danish",
+  nl: "Dutch",
+  en: "English",
+  "en-gb": "English (UK)",
+  et: "Estonian",
+  fi: "Finnish",
+  fr: "French",
+  gl: "Galician",
+  de: "German",
+  el: "Greek",
+  gu: "Gujarati",
+  he: "Hebrew",
+  hi: "Hindi",
+  hu: "Hungarian",
+  is: "Icelandic",
+  it: "Italian",
+  jp: "Japanese",
+  kn: "Kannada",
+  ko: "Korean",
+  lv: "Latvian",
+  lt: "Lithuanian",
+  ms: "Malay",
+  ml: "Malayalam",
+  mr: "Marathi",
+  nb: "Norwegian Bokmal",
+  pl: "Polish",
+  "pt-br": "Portuguese (Brazil)",
+  "pt-pt": "Portuguese (Portugal)",
+  pa: "Punjabi",
+  ro: "Romanian",
+  ru: "Russian",
+  sr: "Serbian",
+  sk: "Slovak",
+  sl: "Slovenian",
+  es: "Spanish",
+  sv: "Swedish",
+  ta: "Tamil",
+  te: "Telugu",
+  th: "Thai",
+  tr: "Turkish",
+  uk: "Ukrainian",
+  vi: "Vietnamese",
+} as const satisfies Record<BraveSearchLang, string>;
+
 // franc-min returns ISO-639-3 codes; Brave expects a smaller, fixed enum.
 const FRANC_TO_BRAVE_SEARCH_LANG: Record<string, BraveSearchLang> = {
   ara: "ar",
@@ -120,4 +180,3 @@ const FRANC_TO_BRAVE_SEARCH_LANG: Record<string, BraveSearchLang> = {
 export function inferBraveSearchLangFromFranc(code: string): BraveSearchLang | null {
   return FRANC_TO_BRAVE_SEARCH_LANG[code] ?? null;
 }
-

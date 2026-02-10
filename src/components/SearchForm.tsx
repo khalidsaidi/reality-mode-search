@@ -6,12 +6,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { BRAVE_SEARCH_LANGS, BRAVE_SEARCH_LANG_NAME_BY_CODE } from "@/lib/brave";
 import { normalizeQuery } from "@/lib/normalize";
 import { ISO_COUNTRIES } from "@/lib/isoCountries";
 
 export type SearchFormSubmit = {
   normalizedQuery: string;
   countryHint: string | null;
+  langHint: string | null;
   userBraveKey: string | null;
 };
 
@@ -24,6 +26,7 @@ export function SearchForm({
 }) {
   const [q, setQ] = React.useState("");
   const [country, setCountry] = React.useState<string>("");
+  const [lang, setLang] = React.useState<string>("auto");
 
   const [useByo, setUseByo] = React.useState(false);
   const [byoKey, setByoKey] = React.useState("");
@@ -33,10 +36,12 @@ export function SearchForm({
       const savedUseByo = localStorage.getItem("rms_use_byo");
       const savedKey = localStorage.getItem("rms_byo_key");
       const savedCountry = localStorage.getItem("rms_country_hint");
+      const savedLang = localStorage.getItem("rms_lang_hint");
 
       if (savedUseByo === "true") setUseByo(true);
       if (typeof savedKey === "string") setByoKey(savedKey);
       if (typeof savedCountry === "string") setCountry(savedCountry);
+      if (typeof savedLang === "string" && savedLang) setLang(savedLang);
     } catch {
       // ignore
     }
@@ -66,6 +71,14 @@ export function SearchForm({
     }
   }, [country]);
 
+  React.useEffect(() => {
+    try {
+      localStorage.setItem("rms_lang_hint", lang);
+    } catch {
+      // ignore
+    }
+  }, [lang]);
+
   return (
     <Card>
       <CardHeader>
@@ -81,6 +94,7 @@ export function SearchForm({
             onSubmit({
               normalizedQuery: normalized,
               countryHint: country ? country : null,
+              langHint: lang && lang !== "auto" ? lang : null,
               userBraveKey: useByo ? (byoKey.trim() || null) : null
             });
           }}
@@ -123,6 +137,25 @@ export function SearchForm({
             </p>
           </div>
 
+          <div className="grid gap-2">
+            <label className="text-sm font-medium" htmlFor="lang">
+              Language hint (optional)
+            </label>
+            <Select id="lang" value={lang} onChange={(e) => setLang(e.target.value)}>
+              <option value="auto">Auto (infer from query)</option>
+              <option value="all">All / any language (no hint)</option>
+              {BRAVE_SEARCH_LANGS.map((code) => (
+                <option key={code} value={code}>
+                  {BRAVE_SEARCH_LANG_NAME_BY_CODE[code]} ({code})
+                </option>
+              ))}
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Brave only supports a single <code>search_lang</code> value per request. “All” omits the hint (provider
+              default).
+            </p>
+          </div>
+
           <div className="grid gap-2 rounded-xl border p-3">
             <label className="flex items-center gap-2 text-sm font-medium">
               <input
@@ -156,4 +189,3 @@ export function SearchForm({
     </Card>
   );
 }
-

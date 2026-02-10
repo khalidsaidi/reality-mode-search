@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { inferBraveSearchLangFromFranc, type BraveSearchLang } from "@/lib/brave";
+import { inferBraveSearchLangFromFranc, isBraveSearchLang, type BraveSearchLang } from "@/lib/brave";
 import { inferCountryFromTld } from "@/lib/countryInfer";
 import { detectLang } from "@/lib/lang";
 import { normalizeQuery } from "@/lib/normalize";
@@ -167,14 +167,14 @@ function deriveDisplayUrl(urlStr: string): string {
 async function braveSearch(params: {
   q: string;
   country: BraveSearchCountry;
-  searchLang: BraveSearchLang;
+  searchLang: BraveSearchLang | null;
   key: string;
 }) {
   const url = new URL("https://api.search.brave.com/res/v1/web/search");
   url.searchParams.set("q", params.q);
   url.searchParams.set("count", "20");
   url.searchParams.set("country", params.country);
-  url.searchParams.set("search_lang", params.searchLang);
+  if (params.searchLang) url.searchParams.set("search_lang", params.searchLang);
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
@@ -240,13 +240,55 @@ export async function GET(req: NextRequest) {
   const countryHint =
     countryHintRequested && BRAVE_SUPPORTED_COUNTRIES.has(countryHintRequested) ? countryHintRequested : null;
 
-  // Brave defaults `search_lang` to `en`. Infer from the query to avoid an implicit English-only baseline.
-  const queryLangFranc = detectLang(normalizedQ);
-  const inferredSearchLang = inferBraveSearchLangFromFranc(queryLangFranc);
-  const upstreamSearchLang: BraveSearchLang = inferredSearchLang ?? BRAVE_DEFAULT_SEARCH_LANG;
-  const upstreamSearchLangSource: "inferred_from_query" | "fallback_en" = inferredSearchLang
-    ? "inferred_from_query"
-    : "fallback_en";
+  // Language hint:
+  // - `lang=auto` (default): infer from query, otherwise fall back to `en`
+  // - `lang=all|any|default`: omit search_lang (provider default, documented as `en`)
+  // - `lang=<brave code>`: explicit
+  const langRaw = reqUrl.searchParams.get("lang") ?? "";
+  const langLower = langRaw.trim().toLowerCase();
+
+  let langHint: string | null = null;
+  let upstreamSearchLangParam: BraveSearchLang | null = null;
+  let effectiveSearchLang: BraveSearchLang = BRAVE_DEFAULT_SEARCH_LANG;
+  let upstreamSearchLangSource: "explicit" | "provider_default" | "inferred_from_query" | "fallback_en" =
+    "fallback_en";
+
+  if (!langLower || langLower === "auto") {
+    const queryLangFranc = detectLang(normalizedQ);
+    const inferred = inferBraveSearchLangFromFranc(queryLangFranc);
+    if (inferred) {
+      upstreamSearchLangParam = inferred;
+      effectiveSearchLang = inferred;
+      upstreamSearchLangSource = "inferred_from_query";
+    } else {
+      upstreamSearchLangParam = BRAVE_DEFAULT_SEARCH_LANG;
+      effectiveSearchLang = BRAVE_DEFAULT_SEARCH_LANG;
+      upstreamSearchLangSource = "fallback_en";
+    }
+  } else if (langLower === "all" || langLower === "any" || langLower === "default") {
+    langHint = "all";
+    upstreamSearchLangParam = null; // omit => provider default
+    effectiveSearchLang = BRAVE_DEFAULT_SEARCH_LANG;
+    upstreamSearchLangSource = "provider_default";
+  } else if (isBraveSearchLang(langLower)) {
+    langHint = langLower;
+    upstreamSearchLangParam = langLower;
+    effectiveSearchLang = langLower;
+    upstreamSearchLangSource = "explicit";
+  } else {
+    // Invalid hint: ignore and behave like auto.
+    const queryLangFranc = detectLang(normalizedQ);
+    const inferred = inferBraveSearchLangFromFranc(queryLangFranc);
+    if (inferred) {
+      upstreamSearchLangParam = inferred;
+      effectiveSearchLang = inferred;
+      upstreamSearchLangSource = "inferred_from_query";
+    } else {
+      upstreamSearchLangParam = BRAVE_DEFAULT_SEARCH_LANG;
+      effectiveSearchLang = BRAVE_DEFAULT_SEARCH_LANG;
+      upstreamSearchLangSource = "fallback_en";
+    }
+  }
 
   const enableByo = envBool("ENABLE_BYO_KEY", true);
   const userKey = enableByo ? (req.headers.get("x-user-brave-key") ?? "").trim() : "";
@@ -297,7 +339,7 @@ export async function GET(req: NextRequest) {
   const upstream = await braveSearch({
     q: normalizedQ,
     country: upstreamCountry,
-    searchLang: upstreamSearchLang,
+    searchLang: upstreamSearchLangParam,
     key: keyToUse
   });
 
@@ -342,7 +384,8 @@ export async function GET(req: NextRequest) {
     lens: {
       mode: "reality",
       country_hint: countryHint,
-      search_lang: upstreamSearchLang,
+      lang_hint: langHint,
+      search_lang: effectiveSearchLang,
       search_lang_source: upstreamSearchLangSource
     },
     results: deduped,

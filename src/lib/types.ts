@@ -20,8 +20,9 @@ export type SearchResponse = {
   lens: {
     mode: "reality";
     country_hint: string | null;
+    lang_hint: string | null;
     search_lang: string;
-    search_lang_source: "inferred_from_query" | "fallback_en";
+    search_lang_source: "explicit" | "provider_default" | "inferred_from_query" | "fallback_en";
   };
   results: SearchResult[];
   reality: RealityPanel;

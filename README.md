@@ -14,7 +14,9 @@ Next.js app that queries Brave Search and shows results in upstream order (with 
 Brave Web Search has implicit defaults that can look US/English-biased if you don't set them:
 
 - Default `country` is `US`, so we force `country=ALL` when no country hint is selected.
-- Default `search_lang` is `en`. We always send an explicit `search_lang`, inferring it from the query language (franc ISO-639-3) when possible, otherwise falling back to `en`.
+- Default `search_lang` is `en`.
+  - Default behavior (`lang=auto`) sends an explicit `search_lang`, inferring it from the query language (franc ISO-639-3) when possible, otherwise falling back to `en`.
+  - Optional: `lang=all` omits the hint (provider default), and `lang=<code>` forces a Brave-supported language code.
 - We do not send any `x-loc-*` geo headers.
 
 ## Caching / Fairness Model (Sustainability)
