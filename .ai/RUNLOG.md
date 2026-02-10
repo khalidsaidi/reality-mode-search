@@ -141,11 +141,18 @@ vercel deploy --prod --yes
 ```
 
 GitHub integration note:
-- `vercel git connect` failed because the Vercel account does not have a GitHub “Login Connection” configured yet.
-- After connecting GitHub in Vercel’s dashboard, rerun:
+- Project is linked to `khalidsaidi/reality-mode-search` (production branch `main`).
+- Verified auto-deploy: commit `f8ea9c84303e19167b9753074c45a53992455921` triggered a production deployment `dpl_8ndXEwKXg9DSYsUWZ9ws3p4xKSQQ` (READY).
 
 ```bash
 vercel git connect https://github.com/khalidsaidi/reality-mode-search.git
+```
+
+Verification (requires Vercel token):
+
+```bash
+vercel api /v9/projects/reality-mode-search | jq '.link'
+vercel api "/v6/deployments?projectId=prj_acr3iLMFoBfl0CbGiHd3kFZSlhHE&limit=1" | jq '.deployments[0].meta.githubCommitSha'
 ```
 
 ### Cache Verification (Deployed)
