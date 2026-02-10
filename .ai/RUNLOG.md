@@ -227,3 +227,25 @@ PORT=3016 BRAVE_API_KEY=invalid DAILY_MISS_BUDGET=1 npm run start -- -p 3016
 
 - 1st call returned `503` with `details.upstream_status`
 - 2nd call returned `503` without `details` (budget guard triggered)
+
+### Language Baseline (Avoid Implicit English Default)
+
+Brave Web Search defaults `search_lang` to `en` when omitted. This can make “Worldwide” results look English-heavy even for non-English queries. The backend now:
+
+- Infers `search_lang` from the query language (franc ISO-639-3 -> Brave enum), when possible.
+- Falls back to `en` and always sends an explicit `search_lang`.
+
+Local verification:
+
+```bash
+PORT=3005 BRAVE_API_KEY=$BRAVE_API_KEY npm run start -- -p 3005
+curl -sS "http://localhost:3005/api/search?q=plage%20david" | jq '.lens, .reality.histograms.lang_detected[0:5]'
+```
+
+Deployed verification (purge cache first, since server-key responses are CDN-cached for 7 days):
+
+```bash
+vercel cache purge --type cdn --yes
+curl -sS -D - "https://reality-mode-search.vercel.app/api/search?q=plage%20david" -o /tmp/rms_plage_david.json
+cat /tmp/rms_plage_david.json | jq '.lens, .reality.histograms.lang_detected[0:5]'
+```

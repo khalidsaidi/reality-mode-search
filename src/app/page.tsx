@@ -103,6 +103,12 @@ export default function HomePage() {
                   <span className="font-mono text-xs">{data.lens.country_hint ?? "null"}</span>
                 </div>
                 <div>
+                  <span className="text-muted-foreground">search_lang:</span>{" "}
+                  <span className="font-mono text-xs">
+                    {data.lens.search_lang} ({data.lens.search_lang_source})
+                  </span>
+                </div>
+                <div>
                   <span className="text-muted-foreground">cache.mode:</span>{" "}
                   <span className="font-mono text-xs">{data.cache.mode}</span>
                 </div>

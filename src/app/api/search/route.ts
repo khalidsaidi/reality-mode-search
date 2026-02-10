@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { inferBraveSearchLangFromFranc, type BraveSearchLang } from "@/lib/brave";
 import { inferCountryFromTld } from "@/lib/countryInfer";
 import { detectLang } from "@/lib/lang";
 import { normalizeQuery } from "@/lib/normalize";
@@ -62,6 +63,9 @@ const BRAVE_SUPPORTED_COUNTRIES = new Set<string>([
   "US",
   "ALL",
 ]);
+
+// Brave Web Search `search_lang` defaults to `en` if omitted.
+const BRAVE_DEFAULT_SEARCH_LANG: BraveSearchLang = "en";
 
 let serverKeyDailyMissState: { date: string; misses: number } = { date: "", misses: 0 };
 
@@ -160,11 +164,17 @@ function deriveDisplayUrl(urlStr: string): string {
   }
 }
 
-async function braveSearch(params: { q: string; country: BraveSearchCountry; key: string }) {
+async function braveSearch(params: {
+  q: string;
+  country: BraveSearchCountry;
+  searchLang: BraveSearchLang;
+  key: string;
+}) {
   const url = new URL("https://api.search.brave.com/res/v1/web/search");
   url.searchParams.set("q", params.q);
   url.searchParams.set("count", "20");
   url.searchParams.set("country", params.country);
+  url.searchParams.set("search_lang", params.searchLang);
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
@@ -230,6 +240,14 @@ export async function GET(req: NextRequest) {
   const countryHint =
     countryHintRequested && BRAVE_SUPPORTED_COUNTRIES.has(countryHintRequested) ? countryHintRequested : null;
 
+  // Brave defaults `search_lang` to `en`. Infer from the query to avoid an implicit English-only baseline.
+  const queryLangFranc = detectLang(normalizedQ);
+  const inferredSearchLang = inferBraveSearchLangFromFranc(queryLangFranc);
+  const upstreamSearchLang: BraveSearchLang = inferredSearchLang ?? BRAVE_DEFAULT_SEARCH_LANG;
+  const upstreamSearchLangSource: "inferred_from_query" | "fallback_en" = inferredSearchLang
+    ? "inferred_from_query"
+    : "fallback_en";
+
   const enableByo = envBool("ENABLE_BYO_KEY", true);
   const userKey = enableByo ? (req.headers.get("x-user-brave-key") ?? "").trim() : "";
   const serverKey = (process.env.BRAVE_API_KEY ?? "").trim();
@@ -276,7 +294,12 @@ export async function GET(req: NextRequest) {
   }
 
   const upstreamCountry: BraveSearchCountry = countryHint ?? BRAVE_GLOBAL_COUNTRY;
-  const upstream = await braveSearch({ q: normalizedQ, country: upstreamCountry, key: keyToUse });
+  const upstream = await braveSearch({
+    q: normalizedQ,
+    country: upstreamCountry,
+    searchLang: upstreamSearchLang,
+    key: keyToUse
+  });
 
   // Upstream errors: treat as 503. Server key gets a short CDN cache to avoid hammering.
   if (!upstream.ok) {
@@ -316,7 +339,12 @@ export async function GET(req: NextRequest) {
   const response: SearchResponse = {
     query: qRaw,
     normalized_query: normalizedQ,
-    lens: { mode: "reality", country_hint: countryHint },
+    lens: {
+      mode: "reality",
+      country_hint: countryHint,
+      search_lang: upstreamSearchLang,
+      search_lang_source: upstreamSearchLangSource
+    },
     results: deduped,
     reality: computeRealityPanel(deduped),
     cache: {

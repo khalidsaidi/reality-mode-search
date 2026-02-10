@@ -17,7 +17,12 @@ export type SearchResult = {
 export type SearchResponse = {
   query: string;
   normalized_query: string;
-  lens: { mode: "reality"; country_hint: string | null };
+  lens: {
+    mode: "reality";
+    country_hint: string | null;
+    search_lang: string;
+    search_lang_source: "inferred_from_query" | "fallback_en";
+  };
   results: SearchResult[];
   reality: RealityPanel;
   cache: {
@@ -39,4 +44,3 @@ export type ErrorResponse = {
   error: string;
   details?: unknown;
 };
-
