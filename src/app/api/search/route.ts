@@ -51,6 +51,22 @@ function json<T>(body: T, init?: ResponseInit) {
   return NextResponse.json(body, init);
 }
 
+function setVaryUserKey(res: NextResponse) {
+  const header = "x-user-brave-key";
+  const existing = res.headers.get("Vary");
+  if (!existing) {
+    res.headers.set("Vary", header);
+    return;
+  }
+  if (existing.trim() === "*") return;
+  const parts = existing
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  if (parts.includes(header)) return;
+  res.headers.set("Vary", `${existing}, ${header}`);
+}
+
 function setNoStore(res: NextResponse) {
   res.headers.set("Cache-Control", "private, no-store");
   res.headers.set("Pragma", "no-cache");
@@ -144,6 +160,7 @@ export async function GET(req: NextRequest) {
     const res = json<ErrorResponse>({ error: "Rate limit exceeded. Try later." }, { status: 429 });
     res.headers.set("Retry-After", String(rl.retryAfterSeconds));
     setNoStore(res);
+    setVaryUserKey(res);
     return res;
   }
 
@@ -154,6 +171,7 @@ export async function GET(req: NextRequest) {
   if (!normalizedQ) {
     const res = json<ErrorResponse>({ error: "Missing required query parameter: q" }, { status: 400 });
     setNoStore(res);
+    setVaryUserKey(res);
     return res;
   }
 
@@ -182,6 +200,7 @@ export async function GET(req: NextRequest) {
       { status: 503 },
     );
     setNoStore(res);
+    setVaryUserKey(res);
     return res;
   }
 
@@ -202,6 +221,7 @@ export async function GET(req: NextRequest) {
         { status: 503 },
       );
       setServerShortCdnCache(res);
+      setVaryUserKey(res);
       return res;
     }
     serverKeyDailyMissState.misses += 1;
@@ -221,6 +241,7 @@ export async function GET(req: NextRequest) {
 
     if (fetchedWith === "server_key") setServerShortCdnCache(res);
     else setNoStore(res);
+    setVaryUserKey(res);
     return res;
   }
 
@@ -271,6 +292,7 @@ export async function GET(req: NextRequest) {
   } else {
     setServerCdnCache(res, ttlSeconds, swrSeconds, staleIfErrorSeconds);
   }
+  setVaryUserKey(res);
 
   return res;
 }
