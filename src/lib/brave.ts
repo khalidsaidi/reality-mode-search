@@ -1,3 +1,5 @@
+import type { CountryCode } from "@/lib/isoCountries";
+
 /**
  * Brave-specific helpers.
  *
@@ -67,6 +69,50 @@ export const BRAVE_SEARCH_LANG_SET = new Set<string>(BRAVE_SEARCH_LANGS as reado
 export function isBraveSearchLang(v: string): v is BraveSearchLang {
   return BRAVE_SEARCH_LANG_SET.has(v);
 }
+
+// Brave Web Search "country" defaults to US if omitted; use "ALL" for a worldwide baseline.
+export type BraveSearchCountry = CountryCode | "ALL";
+export const BRAVE_GLOBAL_COUNTRY: BraveSearchCountry = "ALL";
+export const BRAVE_SUPPORTED_COUNTRIES = new Set<BraveSearchCountry>([
+  "AR",
+  "AU",
+  "AT",
+  "BE",
+  "BR",
+  "CA",
+  "CL",
+  "DK",
+  "FI",
+  "FR",
+  "DE",
+  "GR",
+  "HK",
+  "IN",
+  "ID",
+  "IT",
+  "JP",
+  "KR",
+  "MY",
+  "MX",
+  "NL",
+  "NZ",
+  "NO",
+  "CN",
+  "PL",
+  "PT",
+  "PH",
+  "RU",
+  "SA",
+  "ZA",
+  "ES",
+  "SE",
+  "CH",
+  "TW",
+  "TR",
+  "GB",
+  "US",
+  "ALL",
+]);
 
 export const BRAVE_SEARCH_LANG_NAME_BY_CODE = {
   ar: "Arabic",

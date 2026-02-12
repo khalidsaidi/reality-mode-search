@@ -8,7 +8,10 @@ import { SearchForm, type SearchFormSubmit } from "@/components/SearchForm";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { BRAVE_SUPPORTED_COUNTRIES } from "@/lib/brave";
 import { toPlainTextFromHtml } from "@/lib/html";
+import { ISO_COUNTRIES } from "@/lib/isoCountries";
 import type { ErrorResponse, SearchResponse } from "@/lib/types";
 
 const GLOBAL_COMPARE_BUCKETS = [
@@ -36,6 +39,40 @@ type GlobalCompareResult = {
   state: SearchState;
 };
 
+type ProbeCountryResponse = {
+  country: string;
+  provider_supported: boolean;
+  status: "ok" | "unsupported" | "upstream_error";
+  lens: {
+    search_lang: string;
+    search_lang_source: "explicit" | "provider_default" | "inferred_from_query" | "fallback_en";
+  };
+  summary?: {
+    top_results: Array<{ title: string }>;
+    top_domains: Array<{ key: string }>;
+    lang_histogram: Array<{ key: string; pct: number }>;
+  };
+  error?: string;
+};
+
+type CountrySweepRow = {
+  code: string;
+  name: string;
+  providerSupported: boolean;
+  status: "pending" | "ok" | "unsupported" | "upstream_error" | "error";
+  searchLang?: string;
+  topDomain?: string;
+  langBreakdown?: string;
+  topResultTitle?: string;
+  message?: string;
+};
+
+const COUNTRY_SWEEP_DELAY_MS = 1200;
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export default function HomePage() {
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<{
@@ -47,6 +84,16 @@ export default function HomePage() {
   const [lastSubmit, setLastSubmit] = React.useState<SearchFormSubmit | null>(null);
   const [compareLoading, setCompareLoading] = React.useState(false);
   const [compareResults, setCompareResults] = React.useState<GlobalCompareResult[] | null>(null);
+  const [sweepRunning, setSweepRunning] = React.useState(false);
+  const [sweepError, setSweepError] = React.useState<string | null>(null);
+  const [sweepRows, setSweepRows] = React.useState<CountrySweepRow[] | null>(null);
+  const [sweepProgress, setSweepProgress] = React.useState<{
+    completed: number;
+    total: number;
+    supportedCompleted: number;
+    supportedTotal: number;
+  } | null>(null);
+  const sweepStopRequestedRef = React.useRef(false);
 
   const fetchSearch = React.useCallback(async (params: SearchFormSubmit): Promise<SearchState> => {
     try {
@@ -86,6 +133,10 @@ export default function HomePage() {
       setError(null);
       setLastSubmit(params);
       setCompareResults(null);
+      setSweepRows(null);
+      setSweepProgress(null);
+      setSweepError(null);
+      sweepStopRequestedRef.current = false;
 
       const result = await fetchSearch(params);
       if (!result.ok) {
@@ -126,6 +177,141 @@ export default function HomePage() {
     setCompareResults(results);
     setCompareLoading(false);
   }, [fetchSearch, lastSubmit]);
+
+  const runAllCountriesSweep = React.useCallback(async () => {
+    if (!lastSubmit) return;
+
+    if (!lastSubmit.userBraveKey) {
+      setSweepError("All-countries sweep requires BYO key. Enable 'Use my own Brave key' and retry.");
+      return;
+    }
+
+    setSweepRunning(true);
+    setSweepError(null);
+    sweepStopRequestedRef.current = false;
+
+    const rows: CountrySweepRow[] = ISO_COUNTRIES.map((country) => {
+      const supported = BRAVE_SUPPORTED_COUNTRIES.has(country.code);
+      return {
+        code: country.code,
+        name: country.name,
+        providerSupported: supported,
+        status: supported ? "pending" : "unsupported",
+        message: supported ? undefined : "Provider does not support this country hint."
+      };
+    });
+    setSweepRows(rows);
+
+    const supportedCountries = rows.filter((r) => r.providerSupported).map((r) => r.code);
+    let completed = 0;
+    let supportedCompleted = 0;
+    setSweepProgress({
+      completed,
+      total: rows.length,
+      supportedCompleted,
+      supportedTotal: supportedCountries.length
+    });
+
+    const rowIndexByCode = new Map(rows.map((r, idx) => [r.code, idx]));
+
+    for (const country of ISO_COUNTRIES) {
+      if (sweepStopRequestedRef.current) break;
+
+      const rowIdx = rowIndexByCode.get(country.code);
+      if (rowIdx == null) continue;
+
+      if (!rows[rowIdx].providerSupported) {
+        completed += 1;
+        setSweepProgress({
+          completed,
+          total: rows.length,
+          supportedCompleted,
+          supportedTotal: supportedCountries.length
+        });
+        continue;
+      }
+
+      try {
+        const url = new URL("/api/compare-country", window.location.origin);
+        url.searchParams.set("q", lastSubmit.normalizedQuery);
+        url.searchParams.set("country", country.code);
+        if (lastSubmit.langHint) url.searchParams.set("lang", lastSubmit.langHint);
+
+        const res = await fetch(url.toString(), {
+          method: "GET",
+          headers: {
+            "x-user-brave-key": lastSubmit.userBraveKey
+          }
+        });
+
+        if (!res.ok) {
+          const err = (await res.json().catch(() => null)) as ErrorResponse | null;
+          rows[rowIdx] = {
+            ...rows[rowIdx],
+            status: "error",
+            message: err?.error ?? `HTTP ${res.status}`
+          };
+        } else {
+          const body = (await res.json().catch(() => null)) as ProbeCountryResponse | null;
+          if (!body) {
+            rows[rowIdx] = {
+              ...rows[rowIdx],
+              status: "error",
+              message: "Invalid response."
+            };
+          } else if (body.status === "ok") {
+            rows[rowIdx] = {
+              ...rows[rowIdx],
+              status: "ok",
+              searchLang: `${body.lens.search_lang} (${body.lens.search_lang_source})`,
+              topDomain: body.summary?.top_domains?.[0]?.key,
+              langBreakdown:
+                body.summary?.lang_histogram
+                  ?.slice(0, 3)
+                  .map((h) => `${h.key}:${h.pct.toFixed(1)}%`)
+                  .join(" | ") || undefined,
+              topResultTitle: body.summary?.top_results?.[0]?.title
+            };
+          } else {
+            rows[rowIdx] = {
+              ...rows[rowIdx],
+              status: body.status,
+              searchLang: `${body.lens.search_lang} (${body.lens.search_lang_source})`,
+              message: body.error ?? undefined
+            };
+          }
+        }
+      } catch {
+        rows[rowIdx] = {
+          ...rows[rowIdx],
+          status: "error",
+          message: "Network error."
+        };
+      }
+
+      completed += 1;
+      supportedCompleted += 1;
+      setSweepRows([...rows]);
+      setSweepProgress({
+        completed,
+        total: rows.length,
+        supportedCompleted,
+        supportedTotal: supportedCountries.length
+      });
+
+      // Brave free plan has strict per-second rate limits.
+      await delay(COUNTRY_SWEEP_DELAY_MS);
+    }
+
+    if (sweepStopRequestedRef.current) {
+      setSweepError("Sweep stopped.");
+    }
+    setSweepRunning(false);
+  }, [lastSubmit]);
+
+  const stopAllCountriesSweep = React.useCallback(() => {
+    sweepStopRequestedRef.current = true;
+  }, []);
 
   const compareById = React.useMemo(() => {
     return new Map((compareResults ?? []).map((r) => [r.bucket.id, r]));
@@ -261,6 +447,75 @@ export default function HomePage() {
                       </div>
                     );
                   })}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex flex-col items-start justify-between gap-3 md:flex-row md:items-center">
+                <div className="grid gap-1">
+                  <CardTitle>All Countries Sweep (249)</CardTitle>
+                  <p className="text-xs text-muted-foreground">
+                    Tests every ISO country. Unsupported countries are marked immediately; provider-supported countries
+                    are probed sequentially.
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Button onClick={runAllCountriesSweep} disabled={sweepRunning || !lastSubmit}>
+                    {sweepRunning ? "Running..." : "Run ALL Countries"}
+                  </Button>
+                  {sweepRunning ? (
+                    <Button variant="secondary" onClick={stopAllCountriesSweep}>
+                      Stop
+                    </Button>
+                  ) : null}
+                </div>
+              </CardHeader>
+              <CardContent className="grid gap-3">
+                <p className="text-xs text-muted-foreground">
+                  BYO key is required for this sweep to avoid shared budget exhaustion.
+                </p>
+
+                {sweepProgress ? (
+                  <div className="text-xs text-muted-foreground">
+                    Progress: {sweepProgress.completed}/{sweepProgress.total} countries, supported probes:{" "}
+                    {sweepProgress.supportedCompleted}/{sweepProgress.supportedTotal}.
+                  </div>
+                ) : null}
+
+                {sweepError ? <div className="text-xs text-destructive">{sweepError}</div> : null}
+
+                <div className="overflow-auto rounded-lg border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Code</TableHead>
+                        <TableHead>Country</TableHead>
+                        <TableHead>Supported</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>search_lang</TableHead>
+                        <TableHead>Top Domain</TableHead>
+                        <TableHead>Lang Mix</TableHead>
+                        <TableHead>Top Result</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {(sweepRows ?? []).map((row) => (
+                        <TableRow key={row.code}>
+                          <TableCell className="font-mono text-xs">{row.code}</TableCell>
+                          <TableCell>{row.name}</TableCell>
+                          <TableCell>{row.providerSupported ? "yes" : "no"}</TableCell>
+                          <TableCell>{row.status}</TableCell>
+                          <TableCell className="font-mono text-xs">{row.searchLang ?? "-"}</TableCell>
+                          <TableCell className="font-mono text-xs">{row.topDomain ?? "-"}</TableCell>
+                          <TableCell className="font-mono text-xs">{row.langBreakdown ?? "-"}</TableCell>
+                          <TableCell className="max-w-[22rem] truncate text-xs" title={row.topResultTitle ?? row.message}>
+                            {row.topResultTitle ?? row.message ?? "-"}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
                 </div>
               </CardContent>
             </Card>

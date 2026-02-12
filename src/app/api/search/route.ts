@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { inferBraveSearchLangFromFranc, isBraveSearchLang, type BraveSearchLang } from "@/lib/brave";
+import {
+  BRAVE_GLOBAL_COUNTRY,
+  BRAVE_SUPPORTED_COUNTRIES,
+  inferBraveSearchLangFromFranc,
+  isBraveSearchLang,
+  type BraveSearchCountry,
+  type BraveSearchLang
+} from "@/lib/brave";
 import { inferCountryFromTld } from "@/lib/countryInfer";
 import { detectLang } from "@/lib/lang";
 import { normalizeQuery } from "@/lib/normalize";
@@ -19,50 +26,6 @@ const DEFAULT_CACHE_TTL_SECONDS = 604800; // 7 days
 const DEFAULT_SWR_SECONDS = 0;
 const DEFAULT_STALE_IF_ERROR_SECONDS = 604800; // 7 days
 const DEFAULT_DAILY_MISS_BUDGET = 1500;
-
-// Brave Web Search "country" defaults to US if omitted; use "ALL" for a truly worldwide baseline.
-type BraveSearchCountry = CountryCode | "ALL";
-const BRAVE_GLOBAL_COUNTRY: BraveSearchCountry = "ALL";
-const BRAVE_SUPPORTED_COUNTRIES = new Set<string>([
-  "AR",
-  "AU",
-  "AT",
-  "BE",
-  "BR",
-  "CA",
-  "CL",
-  "DK",
-  "FI",
-  "FR",
-  "DE",
-  "GR",
-  "HK",
-  "IN",
-  "ID",
-  "IT",
-  "JP",
-  "KR",
-  "MY",
-  "MX",
-  "NL",
-  "NZ",
-  "NO",
-  "CN",
-  "PL",
-  "PT",
-  "PH",
-  "RU",
-  "SA",
-  "ZA",
-  "ES",
-  "SE",
-  "CH",
-  "TW",
-  "TR",
-  "GB",
-  "US",
-  "ALL",
-]);
 
 // Brave Web Search `search_lang` defaults to `en` if omitted.
 const BRAVE_DEFAULT_SEARCH_LANG: BraveSearchLang = "en";
@@ -238,7 +201,9 @@ export async function GET(req: NextRequest) {
   // Provider constraint: Brave only supports a subset of country codes plus "ALL".
   // If the user selects an unsupported ISO code, ignore it (robust "reality mode").
   const countryHint =
-    countryHintRequested && BRAVE_SUPPORTED_COUNTRIES.has(countryHintRequested) ? countryHintRequested : null;
+    countryHintRequested && BRAVE_SUPPORTED_COUNTRIES.has(countryHintRequested as BraveSearchCountry)
+      ? countryHintRequested
+      : null;
 
   // Language hint:
   // - `lang=auto` (default): infer from query, otherwise fall back to `en`

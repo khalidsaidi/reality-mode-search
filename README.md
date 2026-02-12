@@ -55,6 +55,14 @@ Set in Vercel (or `.env.local` locally):
 
 BYO key requests should never be cached (they are `private, no-store`).
 
+## Fairness Inspection Tools
+
+- **Global Compare**: runs the same query across a small fixed set of country hints (`ALL`, `FR`, `IN`, `BR`, `JP`, `US`) and shows each bucket independently.
+- **All Countries Sweep (249)**: runs across all ISO countries in the UI.
+  - Unsupported country hints are marked without probing upstream.
+  - Provider-supported countries are probed sequentially with delay (to respect Brave free-plan rate limits).
+  - Requires BYO key (`x-user-brave-key`) to avoid exhausting shared server-key budget.
+
 ## Connect GitHub to Vercel
 
 1. In Vercel Dashboard: Add New Project -> Import Git Repository -> select `khalidsaidi/reality-mode-search`.
