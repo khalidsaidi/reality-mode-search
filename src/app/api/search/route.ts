@@ -1,22 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import {
-  BRAVE_GLOBAL_COUNTRY,
-  BRAVE_SUPPORTED_COUNTRIES,
-  inferBraveSearchLangFromFranc,
-  isBraveSearchLang,
-  type BraveSearchCountry,
-  type BraveSearchLang
-} from "@/lib/brave";
 import { inferCountryFromTld } from "@/lib/countryInfer";
 import { detectLang } from "@/lib/lang";
 import { normalizeQuery } from "@/lib/normalize";
+import {
+  buildProviderAttempts,
+  executeProviderAttempt,
+  hasAnyProviderKey,
+  hasAnyUserProviderKey,
+  parseCountryHint,
+  resolveLanguagePlan,
+} from "@/lib/providerRouter";
 import { computeRealityPanel } from "@/lib/reality";
 import { rateLimit } from "@/lib/rateLimit";
 import { getDomain, getTld } from "@/lib/tld";
-import type { CountryCode } from "@/lib/isoCountries";
-import { ISO_COUNTRY_CODES } from "@/lib/isoCountries";
-import type { ErrorResponse, FetchedWith, SearchResponse, SearchResult } from "@/lib/types";
+import type { ErrorResponse, SearchResponse, SearchResult } from "@/lib/types";
 import { dedupByCanonicalUrl } from "@/lib/url";
 
 export const runtime = "nodejs";
@@ -26,9 +24,6 @@ const DEFAULT_CACHE_TTL_SECONDS = 604800; // 7 days
 const DEFAULT_SWR_SECONDS = 0;
 const DEFAULT_STALE_IF_ERROR_SECONDS = 604800; // 7 days
 const DEFAULT_DAILY_MISS_BUDGET = 1500;
-
-// Brave Web Search `search_lang` defaults to `en` if omitted.
-const BRAVE_DEFAULT_SEARCH_LANG: BraveSearchLang = "en";
 
 let serverKeyDailyMissState: { date: string; misses: number } = { date: "", misses: 0 };
 
@@ -41,7 +36,6 @@ function getClientIp(req: NextRequest): string {
   if (xf) return xf.split(",")[0]?.trim() || "unknown";
   const xr = req.headers.get("x-real-ip");
   if (xr) return xr.trim();
-  // NextRequest.ip isn't always available across runtimes.
   return "unknown";
 }
 
@@ -62,20 +56,25 @@ function json<T>(body: T, init?: ResponseInit) {
   return NextResponse.json(body, init);
 }
 
-function setVaryUserKey(res: NextResponse) {
-  const header = "x-user-brave-key";
+function setVaryUserKeys(res: NextResponse) {
+  const headers = ["x-user-brave-key", "x-user-serpapi-key", "x-user-searchapi-key"];
   const existing = res.headers.get("Vary");
   if (!existing) {
-    res.headers.set("Vary", header);
+    res.headers.set("Vary", headers.join(", "));
     return;
   }
   if (existing.trim() === "*") return;
+
   const parts = existing
     .split(",")
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean);
-  if (parts.includes(header)) return;
-  res.headers.set("Vary", `${existing}, ${header}`);
+
+  const merged = [...parts];
+  for (const h of headers) {
+    if (!merged.includes(h)) merged.push(h);
+  }
+  res.headers.set("Vary", merged.join(", "));
 }
 
 function setNoStore(res: NextResponse) {
@@ -100,74 +99,18 @@ function todayUtc(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-type BraveWebResult = {
-  title?: string;
-  url?: string;
-  description?: string;
-  snippet?: string;
-  display_url?: string;
-};
-
-type BraveSearchResponse = {
-  web?: { results?: BraveWebResult[] };
-  results?: BraveWebResult[];
-};
-
-function asString(v: unknown): string {
-  return typeof v === "string" ? v : "";
-}
-
-function deriveDisplayUrl(urlStr: string): string {
-  try {
-    const u = new URL(urlStr);
-    const path = u.pathname === "/" ? "" : u.pathname;
-    return `${u.hostname}${path}`;
-  } catch {
-    return urlStr;
+function consumeServerMissBudget(dailyMissBudget: number): boolean {
+  const today = todayUtc();
+  if (serverKeyDailyMissState.date !== today) {
+    serverKeyDailyMissState = { date: today, misses: 0 };
   }
-}
 
-async function braveSearch(params: {
-  q: string;
-  country: BraveSearchCountry;
-  searchLang: BraveSearchLang | null;
-  key: string;
-}) {
-  const url = new URL("https://api.search.brave.com/res/v1/web/search");
-  url.searchParams.set("q", params.q);
-  url.searchParams.set("count", "20");
-  url.searchParams.set("country", params.country);
-  if (params.searchLang) url.searchParams.set("search_lang", params.searchLang);
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10_000);
-
-  try {
-    try {
-      const res = await fetch(url.toString(), {
-        method: "GET",
-        headers: {
-          "X-Subscription-Token": params.key,
-          "Accept": "application/json"
-        },
-        signal: controller.signal
-      });
-
-      const text = await res.text();
-      let data: unknown = null;
-      try {
-        data = text ? (JSON.parse(text) as unknown) : null;
-      } catch {
-        data = null;
-      }
-
-      return { ok: res.ok, status: res.status, data };
-    } catch {
-      return { ok: false, status: 0, data: null };
-    }
-  } finally {
-    clearTimeout(timeout);
+  if (serverKeyDailyMissState.misses >= dailyMissBudget) {
+    return false;
   }
+
+  serverKeyDailyMissState.misses += 1;
+  return true;
 }
 
 export async function GET(req: NextRequest) {
@@ -177,7 +120,7 @@ export async function GET(req: NextRequest) {
     const res = json<ErrorResponse>({ error: "Rate limit exceeded. Try later." }, { status: 429 });
     res.headers.set("Retry-After", String(rl.retryAfterSeconds));
     setNoStore(res);
-    setVaryUserKey(res);
+    setVaryUserKeys(res);
     return res;
   }
 
@@ -188,92 +131,50 @@ export async function GET(req: NextRequest) {
   if (!normalizedQ) {
     const res = json<ErrorResponse>({ error: "Missing required query parameter: q" }, { status: 400 });
     setNoStore(res);
-    setVaryUserKey(res);
+    setVaryUserKeys(res);
     return res;
   }
 
-  const countryRaw = reqUrl.searchParams.get("country");
-  const countryUpper = countryRaw ? countryRaw.toUpperCase() : null;
-  const countryHintRequested =
-    countryUpper && (ISO_COUNTRY_CODES as readonly string[]).includes(countryUpper)
-      ? (countryUpper as CountryCode)
-      : null;
-  // Provider constraint: Brave only supports a subset of country codes plus "ALL".
-  // If the user selects an unsupported ISO code, ignore it (robust "reality mode").
-  const countryHint =
-    countryHintRequested && BRAVE_SUPPORTED_COUNTRIES.has(countryHintRequested as BraveSearchCountry)
-      ? countryHintRequested
-      : null;
-
-  // Language hint:
-  // - `lang=auto` (default): infer from query, otherwise fall back to `en`
-  // - `lang=all|any|default`: omit search_lang (provider default, documented as `en`)
-  // - `lang=<brave code>`: explicit
-  const langRaw = reqUrl.searchParams.get("lang") ?? "";
-  const langLower = langRaw.trim().toLowerCase();
-
-  let langHint: string | null = null;
-  let upstreamSearchLangParam: BraveSearchLang | null = null;
-  let effectiveSearchLang: BraveSearchLang = BRAVE_DEFAULT_SEARCH_LANG;
-  let upstreamSearchLangSource: "explicit" | "provider_default" | "inferred_from_query" | "fallback_en" =
-    "fallback_en";
-
-  if (!langLower || langLower === "auto") {
-    const queryLangFranc = detectLang(normalizedQ);
-    const inferred = inferBraveSearchLangFromFranc(queryLangFranc);
-    if (inferred) {
-      upstreamSearchLangParam = inferred;
-      effectiveSearchLang = inferred;
-      upstreamSearchLangSource = "inferred_from_query";
-    } else {
-      upstreamSearchLangParam = BRAVE_DEFAULT_SEARCH_LANG;
-      effectiveSearchLang = BRAVE_DEFAULT_SEARCH_LANG;
-      upstreamSearchLangSource = "fallback_en";
-    }
-  } else if (langLower === "all" || langLower === "any" || langLower === "default") {
-    langHint = "all";
-    upstreamSearchLangParam = null; // omit => provider default
-    effectiveSearchLang = BRAVE_DEFAULT_SEARCH_LANG;
-    upstreamSearchLangSource = "provider_default";
-  } else if (isBraveSearchLang(langLower)) {
-    langHint = langLower;
-    upstreamSearchLangParam = langLower;
-    effectiveSearchLang = langLower;
-    upstreamSearchLangSource = "explicit";
-  } else {
-    // Invalid hint: ignore and behave like auto.
-    const queryLangFranc = detectLang(normalizedQ);
-    const inferred = inferBraveSearchLangFromFranc(queryLangFranc);
-    if (inferred) {
-      upstreamSearchLangParam = inferred;
-      effectiveSearchLang = inferred;
-      upstreamSearchLangSource = "inferred_from_query";
-    } else {
-      upstreamSearchLangParam = BRAVE_DEFAULT_SEARCH_LANG;
-      effectiveSearchLang = BRAVE_DEFAULT_SEARCH_LANG;
-      upstreamSearchLangSource = "fallback_en";
-    }
-  }
+  const countryHint = parseCountryHint(reqUrl.searchParams.get("country"));
+  const languagePlan = resolveLanguagePlan(normalizedQ, reqUrl.searchParams.get("lang"));
 
   const enableByo = envBool("ENABLE_BYO_KEY", true);
-  const userKey = enableByo ? (req.headers.get("x-user-brave-key") ?? "").trim() : "";
-  const serverKey = (process.env.BRAVE_API_KEY ?? "").trim();
+  const keys = {
+    user: {
+      brave: enableByo ? (req.headers.get("x-user-brave-key") ?? "").trim() : "",
+      serpapi: enableByo ? (req.headers.get("x-user-serpapi-key") ?? "").trim() : "",
+      searchapi: enableByo ? (req.headers.get("x-user-searchapi-key") ?? "").trim() : "",
+    },
+    server: {
+      brave: (process.env.BRAVE_API_KEY ?? "").trim(),
+      serpapi: (process.env.SERPAPI_API_KEY ?? "").trim(),
+      searchapi: (process.env.SEARCHAPI_API_KEY ?? "").trim(),
+    },
+  };
 
-  let fetchedWith: FetchedWith = "none";
-  let keyToUse = "";
-  if (userKey) {
-    fetchedWith = "user_key";
-    keyToUse = userKey;
-  } else if (serverKey) {
-    fetchedWith = "server_key";
-    keyToUse = serverKey;
-  } else {
+  if (!hasAnyProviderKey(keys)) {
     const res = json<ErrorResponse>(
-      { error: "No upstream key configured. Provide your own Brave key." },
+      {
+        error:
+          "No upstream key configured. Provide one of: x-user-brave-key, x-user-serpapi-key, x-user-searchapi-key.",
+      },
       { status: 503 },
     );
     setNoStore(res);
-    setVaryUserKey(res);
+    setVaryUserKeys(res);
+    return res;
+  }
+
+  const attempts = buildProviderAttempts(countryHint, keys);
+  if (attempts.length === 0) {
+    const res = json<ErrorResponse>(
+      {
+        error: "No provider route available for this request. Configure at least one provider key.",
+      },
+      { status: 503 },
+    );
+    setNoStore(res);
+    setVaryUserKeys(res);
     return res;
   }
 
@@ -282,66 +183,89 @@ export async function GET(req: NextRequest) {
   const staleIfErrorSeconds = envInt("STALE_IF_ERROR_SECONDS", DEFAULT_STALE_IF_ERROR_SECONDS);
   const dailyMissBudget = envInt("DAILY_MISS_BUDGET", DEFAULT_DAILY_MISS_BUDGET);
 
-  // Soft daily miss budget guard (server key only).
-  if (fetchedWith === "server_key") {
-    const today = todayUtc();
-    if (serverKeyDailyMissState.date !== today) serverKeyDailyMissState = { date: today, misses: 0 };
-    if (serverKeyDailyMissState.misses >= dailyMissBudget) {
-      const res = json<ErrorResponse>(
-        {
-          error: "Live refresh paused/throttled to stay free. Try later or use your own Brave key."
-        },
-        { status: 503 },
-      );
-      setServerShortCdnCache(res);
-      setVaryUserKey(res);
-      return res;
+  const hasAnyUserKey = hasAnyUserProviderKey(keys);
+
+  const attemptTrace: Array<{
+    provider: string;
+    status: number;
+    key_source: "user" | "server";
+    reason: string;
+    exact_country_applied: boolean;
+  }> = [];
+
+  let selected:
+    | {
+        attempt: (typeof attempts)[number];
+        results: SearchResult[];
+      }
+    | null = null;
+
+  for (const attempt of attempts) {
+    if (attempt.keySource === "server") {
+      const budgetAllowed = consumeServerMissBudget(dailyMissBudget);
+      if (!budgetAllowed) {
+        attemptTrace.push({
+          provider: attempt.provider,
+          status: 503,
+          key_source: attempt.keySource,
+          reason: "daily_miss_budget_exceeded",
+          exact_country_applied: attempt.exactCountryApplied,
+        });
+        continue;
+      }
     }
-    serverKeyDailyMissState.misses += 1;
+
+    const upstream = await executeProviderAttempt(attempt, {
+      q: normalizedQ,
+      languagePlan,
+    });
+
+    attemptTrace.push({
+      provider: attempt.provider,
+      status: upstream.status,
+      key_source: attempt.keySource,
+      reason: attempt.reason,
+      exact_country_applied: attempt.exactCountryApplied,
+    });
+
+    if (!upstream.ok) continue;
+
+    const mapped: SearchResult[] = upstream.results.map((r) => {
+      const url = r.url;
+      const title = r.title;
+      const snippet = r.snippet;
+      const display_url = r.display_url;
+      const domain = getDomain(url);
+      const tld = getTld(domain);
+      const country_inferred = inferCountryFromTld(tld);
+      const lang_detected = detectLang([title, snippet].filter(Boolean).join(" "));
+
+      return { title, url, snippet, display_url, domain, tld, country_inferred, lang_detected };
+    });
+
+    selected = { attempt, results: mapped };
+    break;
   }
 
-  const upstreamCountry: BraveSearchCountry = countryHint ?? BRAVE_GLOBAL_COUNTRY;
-  const upstream = await braveSearch({
-    q: normalizedQ,
-    country: upstreamCountry,
-    searchLang: upstreamSearchLangParam,
-    key: keyToUse
-  });
-
-  // Upstream errors: treat as 503. Server key gets a short CDN cache to avoid hammering.
-  if (!upstream.ok) {
+  if (!selected) {
     const res = json<ErrorResponse>(
       {
-        error: "Live refresh paused/throttled to stay free. Try later or use your own Brave key.",
-        details: { upstream_status: upstream.status }
+        error: "Live refresh paused/throttled to stay free. Try later or provide your own provider key.",
+        details: {
+          attempts: attemptTrace,
+        },
       },
       { status: 503 },
     );
 
-    if (fetchedWith === "server_key") setServerShortCdnCache(res);
+    if (!hasAnyUserKey) setServerShortCdnCache(res);
     else setNoStore(res);
-    setVaryUserKey(res);
+    setVaryUserKeys(res);
     return res;
   }
 
-  const braveData = upstream.data as BraveSearchResponse | null;
-  const webResults: BraveWebResult[] = braveData?.web?.results ?? braveData?.results ?? [];
-
-  const mapped: SearchResult[] = webResults.map((r) => {
-    const url = asString(r.url);
-    const title = asString(r.title);
-    const snippet = asString(r.description || r.snippet);
-    const display_url = asString(r.display_url) || deriveDisplayUrl(url);
-    const domain = getDomain(url);
-    const tld = getTld(domain);
-    const country_inferred = inferCountryFromTld(tld);
-    const lang_detected = detectLang([title, snippet].filter(Boolean).join(" "));
-
-    return { title, url, snippet, display_url, domain, tld, country_inferred, lang_detected };
-  });
-
-  const deduped = dedupByCanonicalUrl(mapped);
-  const dedupedCount = mapped.length - deduped.length;
+  const deduped = dedupByCanonicalUrl(selected.results);
+  const dedupedCount = selected.results.length - deduped.length;
 
   const response: SearchResponse = {
     query: qRaw,
@@ -349,35 +273,41 @@ export async function GET(req: NextRequest) {
     lens: {
       mode: "reality",
       country_hint: countryHint,
-      lang_hint: langHint,
-      search_lang: effectiveSearchLang,
-      search_lang_source: upstreamSearchLangSource
+      lang_hint: languagePlan.langHint,
+      search_lang: languagePlan.searchLang,
+      search_lang_source: languagePlan.searchLangSource,
     },
     results: deduped,
     reality: computeRealityPanel(deduped),
     cache: {
-      mode: fetchedWith === "user_key" ? "no-store" : "vercel-cdn",
-      ttl_seconds: fetchedWith === "user_key" ? 0 : ttlSeconds,
-      swr_seconds: fetchedWith === "user_key" ? 0 : swrSeconds,
-      stale_if_error_seconds: fetchedWith === "user_key" ? 0 : staleIfErrorSeconds
+      mode: hasAnyUserKey ? "no-store" : "vercel-cdn",
+      ttl_seconds: hasAnyUserKey ? 0 : ttlSeconds,
+      swr_seconds: hasAnyUserKey ? 0 : swrSeconds,
+      stale_if_error_seconds: hasAnyUserKey ? 0 : staleIfErrorSeconds,
     },
     meta: {
-      provider: "brave",
-      fetched_with: fetchedWith,
+      provider: selected.attempt.provider,
+      providers_tried: attemptTrace.map((t) => t.provider),
+      provider_key_source: selected.attempt.keySource,
+      provider_route_reason: selected.attempt.reason,
+      requested_country_supported_by_provider: selected.attempt.providerSupportsCountry,
+      exact_country_applied: selected.attempt.exactCountryApplied,
+      applied_country_param: selected.attempt.countryParam,
+      fetched_with: selected.attempt.keySource === "user" ? "user_key" : "server_key",
       deduped: dedupedCount,
       returned: deduped.length,
-      build: { sha: getBuildSha() }
-    }
+      build: { sha: getBuildSha() },
+    },
   };
 
   const res = json<SearchResponse>(response, { status: 200 });
 
-  if (fetchedWith === "user_key") {
+  if (hasAnyUserKey) {
     setNoStore(res);
   } else {
     setServerCdnCache(res, ttlSeconds, swrSeconds, staleIfErrorSeconds);
   }
-  setVaryUserKey(res);
+  setVaryUserKeys(res);
 
   return res;
 }

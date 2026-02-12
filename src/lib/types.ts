@@ -1,4 +1,5 @@
 import type { RealityPanel } from "@/lib/reality";
+import type { ProviderId } from "@/lib/providerRouter";
 
 export type FetchedWith = "server_key" | "user_key" | "none";
 export type CacheMode = "vercel-cdn" | "no-store";
@@ -33,7 +34,13 @@ export type SearchResponse = {
     stale_if_error_seconds: number;
   };
   meta: {
-    provider: "brave";
+    provider: ProviderId;
+    providers_tried: string[];
+    provider_key_source: "user" | "server";
+    provider_route_reason: string;
+    requested_country_supported_by_provider: boolean;
+    exact_country_applied: boolean;
+    applied_country_param: string | null;
     fetched_with: FetchedWith;
     deduped: number;
     returned: number;

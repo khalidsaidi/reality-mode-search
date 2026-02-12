@@ -9,9 +9,9 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { BRAVE_SUPPORTED_COUNTRIES } from "@/lib/brave";
 import { toPlainTextFromHtml } from "@/lib/html";
 import { ISO_COUNTRIES } from "@/lib/isoCountries";
+import { hasAnyExactCountrySupport } from "@/lib/providerRouter";
 import type { ErrorResponse, SearchResponse } from "@/lib/types";
 
 const GLOBAL_COMPARE_BUCKETS = [
@@ -51,6 +51,12 @@ type ProbeCountryResponse = {
     top_results: Array<{ title: string }>;
     top_domains: Array<{ key: string }>;
     lang_histogram: Array<{ key: string; pct: number }>;
+  };
+  routing?: {
+    selected_provider?: string;
+    selected_key_source?: "user" | "server";
+    exact_country_applied?: boolean;
+    route_reason?: string;
   };
   error?: string;
 };
@@ -104,7 +110,14 @@ export default function HomePage() {
 
       const res = await fetch(url.toString(), {
         method: "GET",
-        headers: params.userBraveKey ? { "x-user-brave-key": params.userBraveKey } : undefined
+        headers:
+          params.userBraveKey || params.userSerpApiKey || params.userSearchApiKey
+            ? {
+                ...(params.userBraveKey ? { "x-user-brave-key": params.userBraveKey } : {}),
+                ...(params.userSerpApiKey ? { "x-user-serpapi-key": params.userSerpApiKey } : {}),
+                ...(params.userSearchApiKey ? { "x-user-searchapi-key": params.userSearchApiKey } : {}),
+              }
+            : undefined,
       });
 
       const json = (await res.json().catch(() => null)) as SearchResponse | ErrorResponse | null;
@@ -168,7 +181,9 @@ export default function HomePage() {
           normalizedQuery: lastSubmit.normalizedQuery,
           countryHint: bucket.countryHint,
           langHint: lastSubmit.langHint,
-          userBraveKey: lastSubmit.userBraveKey
+          userBraveKey: lastSubmit.userBraveKey,
+          userSerpApiKey: lastSubmit.userSerpApiKey,
+          userSearchApiKey: lastSubmit.userSearchApiKey,
         });
         return { bucket, state } satisfies GlobalCompareResult;
       }),
@@ -181,23 +196,18 @@ export default function HomePage() {
   const runAllCountriesSweep = React.useCallback(async () => {
     if (!lastSubmit) return;
 
-    if (!lastSubmit.userBraveKey) {
-      setSweepError("All-countries sweep requires BYO key. Enable 'Use my own Brave key' and retry.");
-      return;
-    }
-
     setSweepRunning(true);
     setSweepError(null);
     sweepStopRequestedRef.current = false;
 
     const rows: CountrySweepRow[] = ISO_COUNTRIES.map((country) => {
-      const supported = BRAVE_SUPPORTED_COUNTRIES.has(country.code);
+      const supported = hasAnyExactCountrySupport(country.code);
       return {
         code: country.code,
         name: country.name,
         providerSupported: supported,
-        status: supported ? "pending" : "unsupported",
-        message: supported ? undefined : "Provider does not support this country hint."
+        status: "pending",
+        message: supported ? undefined : "No exact country support. Will use global fallback if available."
       };
     });
     setSweepRows(rows);
@@ -221,14 +231,11 @@ export default function HomePage() {
       if (rowIdx == null) continue;
 
       if (!rows[rowIdx].providerSupported) {
-        completed += 1;
-        setSweepProgress({
-          completed,
-          total: rows.length,
-          supportedCompleted,
-          supportedTotal: supportedCountries.length
-        });
-        continue;
+        rows[rowIdx] = {
+          ...rows[rowIdx],
+          status: "pending",
+          message: "No exact country support. Trying global fallback route."
+        };
       }
 
       try {
@@ -239,9 +246,14 @@ export default function HomePage() {
 
         const res = await fetch(url.toString(), {
           method: "GET",
-          headers: {
-            "x-user-brave-key": lastSubmit.userBraveKey
-          }
+          headers:
+            lastSubmit.userBraveKey || lastSubmit.userSerpApiKey || lastSubmit.userSearchApiKey
+              ? {
+                  ...(lastSubmit.userBraveKey ? { "x-user-brave-key": lastSubmit.userBraveKey } : {}),
+                  ...(lastSubmit.userSerpApiKey ? { "x-user-serpapi-key": lastSubmit.userSerpApiKey } : {}),
+                  ...(lastSubmit.userSearchApiKey ? { "x-user-searchapi-key": lastSubmit.userSearchApiKey } : {}),
+                }
+              : undefined
         });
 
         if (!res.ok) {
@@ -270,7 +282,10 @@ export default function HomePage() {
                   ?.slice(0, 3)
                   .map((h) => `${h.key}:${h.pct.toFixed(1)}%`)
                   .join(" | ") || undefined,
-              topResultTitle: body.summary?.top_results?.[0]?.title
+              topResultTitle: body.summary?.top_results?.[0]?.title,
+              message: body.routing?.selected_provider
+                ? `${body.routing.selected_provider}${body.routing.exact_country_applied ? " (exact)" : " (fallback)"}`
+                : undefined
             };
           } else {
             rows[rowIdx] = {
@@ -290,7 +305,7 @@ export default function HomePage() {
       }
 
       completed += 1;
-      supportedCompleted += 1;
+      if (rows[rowIdx].providerSupported) supportedCompleted += 1;
       setSweepRows([...rows]);
       setSweepProgress({
         completed,
@@ -343,7 +358,7 @@ export default function HomePage() {
                 </div>
               ) : null}
               {error.status === 503 ? (
-                <div>Tip: enable “Use my own Brave key” to bypass shared budget/caching.</div>
+                <div>Tip: enable “Use my own provider keys” to bypass shared budget/caching.</div>
               ) : null}
             </AlertDescription>
           </Alert>
@@ -377,6 +392,12 @@ export default function HomePage() {
                 <div>
                   <span className="text-muted-foreground">cache.mode:</span>{" "}
                   <span className="font-mono text-xs">{data.cache.mode}</span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">provider:</span>{" "}
+                  <span className="font-mono text-xs">
+                    {data.meta.provider} ({data.meta.provider_key_source}, {data.meta.exact_country_applied ? "exact" : "fallback"})
+                  </span>
                 </div>
               </CardContent>
             </Card>
@@ -455,10 +476,10 @@ export default function HomePage() {
               <CardHeader className="flex flex-col items-start justify-between gap-3 md:flex-row md:items-center">
                 <div className="grid gap-1">
                   <CardTitle>All Countries Sweep (249)</CardTitle>
-                  <p className="text-xs text-muted-foreground">
-                    Tests every ISO country. Unsupported countries are marked immediately; provider-supported countries
-                    are probed sequentially.
-                  </p>
+                <p className="text-xs text-muted-foreground">
+                  Tests every ISO country through the multi-provider router. Countries without exact support use global
+                  fallback routes.
+                </p>
                 </div>
                 <div className="flex gap-2">
                   <Button onClick={runAllCountriesSweep} disabled={sweepRunning || !lastSubmit}>
@@ -473,7 +494,7 @@ export default function HomePage() {
               </CardHeader>
               <CardContent className="grid gap-3">
                 <p className="text-xs text-muted-foreground">
-                  BYO key is required for this sweep to avoid shared budget exhaustion.
+                  BYO keys are optional. Without BYO, this can consume shared server-key budget.
                 </p>
 
                 {sweepProgress ? (

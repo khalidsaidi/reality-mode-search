@@ -15,6 +15,8 @@ export type SearchFormSubmit = {
   countryHint: string | null;
   langHint: string | null;
   userBraveKey: string | null;
+  userSerpApiKey: string | null;
+  userSearchApiKey: string | null;
 };
 
 export function SearchForm({
@@ -29,17 +31,23 @@ export function SearchForm({
   const [lang, setLang] = React.useState<string>("auto");
 
   const [useByo, setUseByo] = React.useState(false);
-  const [byoKey, setByoKey] = React.useState("");
+  const [byoBraveKey, setByoBraveKey] = React.useState("");
+  const [byoSerpApiKey, setByoSerpApiKey] = React.useState("");
+  const [byoSearchApiKey, setByoSearchApiKey] = React.useState("");
 
   React.useEffect(() => {
     try {
       const savedUseByo = localStorage.getItem("rms_use_byo");
-      const savedKey = localStorage.getItem("rms_byo_key");
+      const savedBraveKey = localStorage.getItem("rms_byo_brave_key");
+      const savedSerpApiKey = localStorage.getItem("rms_byo_serpapi_key");
+      const savedSearchApiKey = localStorage.getItem("rms_byo_searchapi_key");
       const savedCountry = localStorage.getItem("rms_country_hint");
       const savedLang = localStorage.getItem("rms_lang_hint");
 
       if (savedUseByo === "true") setUseByo(true);
-      if (typeof savedKey === "string") setByoKey(savedKey);
+      if (typeof savedBraveKey === "string") setByoBraveKey(savedBraveKey);
+      if (typeof savedSerpApiKey === "string") setByoSerpApiKey(savedSerpApiKey);
+      if (typeof savedSearchApiKey === "string") setByoSearchApiKey(savedSearchApiKey);
       if (typeof savedCountry === "string") setCountry(savedCountry);
       if (typeof savedLang === "string" && savedLang) setLang(savedLang);
     } catch {
@@ -57,11 +65,27 @@ export function SearchForm({
 
   React.useEffect(() => {
     try {
-      localStorage.setItem("rms_byo_key", byoKey);
+      localStorage.setItem("rms_byo_brave_key", byoBraveKey);
     } catch {
       // ignore
     }
-  }, [byoKey]);
+  }, [byoBraveKey]);
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem("rms_byo_serpapi_key", byoSerpApiKey);
+    } catch {
+      // ignore
+    }
+  }, [byoSerpApiKey]);
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem("rms_byo_searchapi_key", byoSearchApiKey);
+    } catch {
+      // ignore
+    }
+  }, [byoSearchApiKey]);
 
   React.useEffect(() => {
     try {
@@ -95,7 +119,9 @@ export function SearchForm({
               normalizedQuery: normalized,
               countryHint: country ? country : null,
               langHint: lang && lang !== "auto" ? lang : null,
-              userBraveKey: useByo ? (byoKey.trim() || null) : null
+              userBraveKey: useByo ? (byoBraveKey.trim() || null) : null,
+              userSerpApiKey: useByo ? (byoSerpApiKey.trim() || null) : null,
+              userSearchApiKey: useByo ? (byoSearchApiKey.trim() || null) : null
             });
           }}
         >
@@ -151,8 +177,7 @@ export function SearchForm({
               ))}
             </Select>
             <p className="text-xs text-muted-foreground">
-              Brave only supports a single <code>search_lang</code> value per request. “All” omits the hint (provider
-              default).
+              The router maps this hint to each provider where possible. “All” omits language hint (provider default).
             </p>
           </div>
 
@@ -163,19 +188,31 @@ export function SearchForm({
                 checked={useByo}
                 onChange={(e) => setUseByo(e.target.checked)}
               />
-              Use my own Brave key
+              Use my own provider keys
             </label>
 
             {useByo ? (
               <div className="grid gap-2">
                 <Input
-                  value={byoKey}
-                  onChange={(e) => setByoKey(e.target.value)}
-                  placeholder="Brave Search API key"
+                  value={byoBraveKey}
+                  onChange={(e) => setByoBraveKey(e.target.value)}
+                  placeholder="Brave Search API key (optional)"
+                  autoComplete="off"
+                />
+                <Input
+                  value={byoSerpApiKey}
+                  onChange={(e) => setByoSerpApiKey(e.target.value)}
+                  placeholder="SerpAPI key (optional)"
+                  autoComplete="off"
+                />
+                <Input
+                  value={byoSearchApiKey}
+                  onChange={(e) => setByoSearchApiKey(e.target.value)}
+                  placeholder="SearchApi key (optional)"
                   autoComplete="off"
                 />
                 <p className="text-xs text-muted-foreground">
-                  BYO key requests are private (not cached) and may be slower. Your key stays in your browser.
+                  BYO key requests are private (not cached) and may be slower. Keys stay in your browser.
                 </p>
               </div>
             ) : (

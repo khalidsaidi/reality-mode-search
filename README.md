@@ -1,6 +1,6 @@
 # Reality Mode Search
 
-Next.js app that queries Brave Search and shows results in upstream order (with stable URL canonicalization + dedup only).
+Next.js app that queries multiple upstream engines (Brave, SerpAPI, SearchApi) and shows results in upstream order (with stable URL canonicalization + dedup only).
 
 ## Reality Mode Rules (No-Drift)
 
@@ -9,23 +9,23 @@ Next.js app that queries Brave Search and shows results in upstream order (with 
   - URL canonicalization (remove fragments + common tracking params)
   - Stable dedup by canonical URL (keep first occurrence)
 
-## Upstream Parameters (Brave)
+## Multi-Engine Routing
 
-Brave Web Search has implicit defaults that can look US/English-biased if you don't set them:
-
-- Default `country` is `US`, so we force `country=ALL` when no country hint is selected.
-- Default `search_lang` is `en`.
-  - Default behavior (`lang=auto`) sends an explicit `search_lang`, inferring it from the query language (franc ISO-639-3) when possible, otherwise falling back to `en`.
-  - Optional: `lang=all` omits the hint (provider default), and `lang=<code>` forces a Brave-supported language code.
-- We do not send any `x-loc-*` geo headers.
+- Country-hinted requests use an exact-country route when supported:
+  - `serpapi` -> `searchapi` -> `brave` (in that order).
+- If no exact-country provider is available, router falls back to global routes:
+  - `serpapi (global)` -> `searchapi (global)` -> `brave country=ALL`.
+- Default query (no country hint) uses global routes only.
+- `lang=auto` infers query language and maps it to each provider where possible.
+- `lang=all` omits language hint (provider default).
 
 ## Caching / Fairness Model (Sustainability)
 
 Two key modes:
 
-- **Server key** (`BRAVE_API_KEY`): responses are CDN-cacheable via `CDN-Cache-Control` with long TTL.
+- **Server key** (`BRAVE_API_KEY`, `SERPAPI_API_KEY`, `SEARCHAPI_API_KEY`): responses are CDN-cacheable via `CDN-Cache-Control` with long TTL.
   - Goal: reduce upstream calls so the public demo stays free.
-- **BYO key** (client sends `x-user-brave-key`, gated by `ENABLE_BYO_KEY=true`): responses are `private, no-store`.
+- **BYO key** (client sends any `x-user-*` key header, gated by `ENABLE_BYO_KEY=true`): responses are `private, no-store`.
   - Goal: prevent user-supplied keys from subsidizing other users via shared CDN cache.
 
 There is also a soft **daily miss budget** guard (in-memory per instance). Combined with CDN caching this is sufficient for an MVP.
@@ -42,6 +42,8 @@ npm run dev
 Set in Vercel (or `.env.local` locally):
 
 - `BRAVE_API_KEY` (optional but recommended for public demo)
+- `SERPAPI_API_KEY` (recommended for broad country coverage)
+- `SEARCHAPI_API_KEY` (recommended as fallback coverage)
 - `CACHE_TTL_SECONDS=604800`
 - `SWR_SECONDS=0`
 - `STALE_IF_ERROR_SECONDS=604800`
@@ -53,15 +55,15 @@ Set in Vercel (or `.env.local` locally):
 1. Call `/api/search?q=hello` twice (without BYO key header).
 2. The second response should be served from cache (look for `x-vercel-cache=HIT` on Vercel).
 
-BYO key requests should never be cached (they are `private, no-store`).
+BYO key requests (`x-user-brave-key`, `x-user-serpapi-key`, `x-user-searchapi-key`) should never be cached (they are `private, no-store`).
 
 ## Fairness Inspection Tools
 
 - **Global Compare**: runs the same query across a small fixed set of country hints (`ALL`, `FR`, `IN`, `BR`, `JP`, `US`) and shows each bucket independently.
 - **All Countries Sweep (249)**: runs across all ISO countries in the UI.
-  - Unsupported country hints are marked without probing upstream.
-  - Provider-supported countries are probed sequentially with delay (to respect Brave free-plan rate limits).
-  - Requires BYO key (`x-user-brave-key`) to avoid exhausting shared server-key budget.
+  - Countries with no exact support are still probed via global fallback routes.
+  - Probes are sequential with delay to avoid triggering provider rate limits.
+  - BYO keys are optional, but recommended to avoid exhausting shared server-key budget.
 
 ## Connect GitHub to Vercel
 
