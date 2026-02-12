@@ -46,9 +46,6 @@ export function ResultsList({ results }: { results: SearchResult[] }) {
               <span className="truncate">{toPlainTextFromHtml(r.display_url || r.domain)}</span>
               {r.tld ? <Badge>{r.tld}</Badge> : null}
               {r.country_inferred && r.country_inferred !== "unknown" ? <Badge>{r.country_inferred}</Badge> : null}
-              {r.lang_detected && r.lang_detected !== "unknown" ? (
-                <Badge variant="secondary">{r.lang_detected}</Badge>
-              ) : null}
             </div>
           </CardHeader>
           {r.snippet ? (

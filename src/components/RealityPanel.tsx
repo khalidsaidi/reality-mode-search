@@ -56,7 +56,6 @@ export function RealityPanel({ reality }: { reality: RealityPanelData }) {
             <AccordionContent className="grid gap-6">
               <HistogramTable title="TLD" rows={reality.histograms.tld} />
               <HistogramTable title="Country (inferred from TLD)" rows={reality.histograms.country_inferred} />
-              <HistogramTable title="Language (detected)" rows={reality.histograms.lang_detected} />
               <HistogramTable title="Top domains" rows={reality.histograms.top_domains} />
             </AccordionContent>
           </AccordionItem>
@@ -65,4 +64,3 @@ export function RealityPanel({ reality }: { reality: RealityPanelData }) {
     </Card>
   );
 }
-

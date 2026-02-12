@@ -43,14 +43,9 @@ type ProbeCountryResponse = {
   country: string;
   provider_supported: boolean;
   status: "ok" | "unsupported" | "upstream_error";
-  lens: {
-    search_lang: string;
-    search_lang_source: "explicit" | "provider_default" | "inferred_from_query" | "fallback_en";
-  };
   summary?: {
     top_results: Array<{ title: string }>;
     top_domains: Array<{ key: string }>;
-    lang_histogram: Array<{ key: string; pct: number }>;
   };
   routing?: {
     selected_provider?: string;
@@ -66,9 +61,7 @@ type CountrySweepRow = {
   name: string;
   providerSupported: boolean;
   status: "pending" | "ok" | "unsupported" | "upstream_error" | "error";
-  searchLang?: string;
   topDomain?: string;
-  langBreakdown?: string;
   topResultTitle?: string;
   message?: string;
 };
@@ -106,7 +99,6 @@ export default function HomePage() {
       const url = new URL("/api/search", window.location.origin);
       url.searchParams.set("q", params.normalizedQuery);
       if (params.countryHint) url.searchParams.set("country", params.countryHint);
-      if (params.langHint) url.searchParams.set("lang", params.langHint);
 
       const res = await fetch(url.toString(), {
         method: "GET",
@@ -180,7 +172,6 @@ export default function HomePage() {
         const state = await fetchSearch({
           normalizedQuery: lastSubmit.normalizedQuery,
           countryHint: bucket.countryHint,
-          langHint: lastSubmit.langHint,
           userBraveKey: lastSubmit.userBraveKey,
           userSerpApiKey: lastSubmit.userSerpApiKey,
           userSearchApiKey: lastSubmit.userSearchApiKey,
@@ -242,7 +233,6 @@ export default function HomePage() {
         const url = new URL("/api/compare-country", window.location.origin);
         url.searchParams.set("q", lastSubmit.normalizedQuery);
         url.searchParams.set("country", country.code);
-        if (lastSubmit.langHint) url.searchParams.set("lang", lastSubmit.langHint);
 
         const res = await fetch(url.toString(), {
           method: "GET",
@@ -275,13 +265,7 @@ export default function HomePage() {
             rows[rowIdx] = {
               ...rows[rowIdx],
               status: "ok",
-              searchLang: `${body.lens.search_lang} (${body.lens.search_lang_source})`,
               topDomain: body.summary?.top_domains?.[0]?.key,
-              langBreakdown:
-                body.summary?.lang_histogram
-                  ?.slice(0, 3)
-                  .map((h) => `${h.key}:${h.pct.toFixed(1)}%`)
-                  .join(" | ") || undefined,
               topResultTitle: body.summary?.top_results?.[0]?.title,
               message: body.routing?.selected_provider
                 ? `${body.routing.selected_provider}${body.routing.exact_country_applied ? " (exact)" : " (fallback)"}`
@@ -291,7 +275,6 @@ export default function HomePage() {
             rows[rowIdx] = {
               ...rows[rowIdx],
               status: body.status,
-              searchLang: `${body.lens.search_lang} (${body.lens.search_lang_source})`,
               message: body.error ?? undefined
             };
           }
@@ -380,16 +363,6 @@ export default function HomePage() {
                   <span className="font-mono text-xs">{data.lens.country_hint ?? "null"}</span>
                 </div>
                 <div>
-                  <span className="text-muted-foreground">lang_hint:</span>{" "}
-                  <span className="font-mono text-xs">{data.lens.lang_hint ?? "null"}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">search_lang:</span>{" "}
-                  <span className="font-mono text-xs">
-                    {data.lens.search_lang} ({data.lens.search_lang_source})
-                  </span>
-                </div>
-                <div>
                   <span className="text-muted-foreground">cache.mode:</span>{" "}
                   <span className="font-mono text-xs">{data.cache.mode}</span>
                 </div>
@@ -431,21 +404,6 @@ export default function HomePage() {
                           </div>
                         ) : entry.state.ok ? (
                           <>
-                            <div className="text-xs text-muted-foreground">
-                              search_lang:{" "}
-                              <span className="font-mono">
-                                {entry.state.data.lens.search_lang} ({entry.state.data.lens.search_lang_source})
-                              </span>
-                            </div>
-                            <div className="text-xs text-muted-foreground">
-                              lang breakdown:{" "}
-                              <span className="font-mono">
-                                {entry.state.data.reality.histograms.lang_detected
-                                  .slice(0, 3)
-                                  .map((h) => `${h.key}:${h.pct.toFixed(1)}%`)
-                                  .join(" | ")}
-                              </span>
-                            </div>
                             <div className="grid gap-1">
                               {entry.state.data.results.slice(0, 3).map((r, i) => (
                                 <a
@@ -514,9 +472,7 @@ export default function HomePage() {
                         <TableHead>Country</TableHead>
                         <TableHead>Supported</TableHead>
                         <TableHead>Status</TableHead>
-                        <TableHead>search_lang</TableHead>
                         <TableHead>Top Domain</TableHead>
-                        <TableHead>Lang Mix</TableHead>
                         <TableHead>Top Result</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -527,9 +483,7 @@ export default function HomePage() {
                           <TableCell>{row.name}</TableCell>
                           <TableCell>{row.providerSupported ? "yes" : "no"}</TableCell>
                           <TableCell>{row.status}</TableCell>
-                          <TableCell className="font-mono text-xs">{row.searchLang ?? "-"}</TableCell>
                           <TableCell className="font-mono text-xs">{row.topDomain ?? "-"}</TableCell>
-                          <TableCell className="font-mono text-xs">{row.langBreakdown ?? "-"}</TableCell>
                           <TableCell className="max-w-[22rem] truncate text-xs" title={row.topResultTitle ?? row.message}>
                             {row.topResultTitle ?? row.message ?? "-"}
                           </TableCell>

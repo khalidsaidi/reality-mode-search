@@ -1,12 +1,8 @@
 import {
   BRAVE_GLOBAL_COUNTRY,
   BRAVE_SUPPORTED_COUNTRIES,
-  inferBraveSearchLangFromFranc,
-  isBraveSearchLang,
   type BraveSearchCountry,
-  type BraveSearchLang,
 } from "@/lib/brave";
-import { detectLang } from "@/lib/lang";
 import type { CountryCode } from "@/lib/isoCountries";
 import { ISO_COUNTRY_CODES } from "@/lib/isoCountries";
 
@@ -23,7 +19,7 @@ export type SearchLanguagePlan = {
   langHint: string | null;
   searchLang: string;
   searchLangSource: SearchLangSource;
-  braveSearchLangParam: BraveSearchLang | null;
+  braveSearchLangParam: null;
   googleHlParam: string | null;
 };
 
@@ -51,62 +47,6 @@ export type ProviderSearchResult = {
   status: number;
   results: ProviderRawResult[];
   details?: unknown;
-};
-
-const BRAVE_DEFAULT_SEARCH_LANG: BraveSearchLang = "en";
-
-const BRAVE_TO_GOOGLE_HL: Record<BraveSearchLang, string> = {
-  ar: "ar",
-  eu: "eu",
-  bn: "bn",
-  bg: "bg",
-  ca: "ca",
-  "zh-hans": "zh-CN",
-  "zh-hant": "zh-TW",
-  hr: "hr",
-  cs: "cs",
-  da: "da",
-  nl: "nl",
-  en: "en",
-  "en-gb": "en-GB",
-  et: "et",
-  fi: "fi",
-  fr: "fr",
-  gl: "gl",
-  de: "de",
-  el: "el",
-  gu: "gu",
-  he: "iw",
-  hi: "hi",
-  hu: "hu",
-  is: "is",
-  it: "it",
-  jp: "ja",
-  kn: "kn",
-  ko: "ko",
-  lv: "lv",
-  lt: "lt",
-  ms: "ms",
-  ml: "ml",
-  mr: "mr",
-  nb: "no",
-  pl: "pl",
-  "pt-br": "pt-BR",
-  "pt-pt": "pt-PT",
-  pa: "pa",
-  ro: "ro",
-  ru: "ru",
-  sr: "sr",
-  sk: "sk",
-  sl: "sl",
-  es: "es",
-  sv: "sv",
-  ta: "ta",
-  te: "te",
-  th: "th",
-  tr: "tr",
-  uk: "uk",
-  vi: "vi",
 };
 
 // Coverage from provider location catalogs as audited on 2026-02-12.
@@ -269,55 +209,15 @@ export function hasAnyExactCountrySupport(country: CountryCode): boolean {
 }
 
 export function resolveLanguagePlan(normalizedQuery: string, rawLangHint: string | null): SearchLanguagePlan {
-  const langLower = (rawLangHint ?? "").trim().toLowerCase();
-
-  let langHint: string | null = null;
-  let braveSearchLangParam: BraveSearchLang | null = null;
-  let effectiveSearchLang: BraveSearchLang = BRAVE_DEFAULT_SEARCH_LANG;
-  let searchLangSource: SearchLangSource = "fallback_en";
-
-  if (!langLower || langLower === "auto") {
-    const queryLangFranc = detectLang(normalizedQuery);
-    const inferred = inferBraveSearchLangFromFranc(queryLangFranc);
-    if (inferred) {
-      braveSearchLangParam = inferred;
-      effectiveSearchLang = inferred;
-      searchLangSource = "inferred_from_query";
-    } else {
-      braveSearchLangParam = BRAVE_DEFAULT_SEARCH_LANG;
-      effectiveSearchLang = BRAVE_DEFAULT_SEARCH_LANG;
-      searchLangSource = "fallback_en";
-    }
-  } else if (langLower === "all" || langLower === "any" || langLower === "default") {
-    langHint = "all";
-    braveSearchLangParam = null;
-    effectiveSearchLang = BRAVE_DEFAULT_SEARCH_LANG;
-    searchLangSource = "provider_default";
-  } else if (isBraveSearchLang(langLower)) {
-    langHint = langLower;
-    braveSearchLangParam = langLower;
-    effectiveSearchLang = langLower;
-    searchLangSource = "explicit";
-  } else {
-    const queryLangFranc = detectLang(normalizedQuery);
-    const inferred = inferBraveSearchLangFromFranc(queryLangFranc);
-    if (inferred) {
-      braveSearchLangParam = inferred;
-      effectiveSearchLang = inferred;
-      searchLangSource = "inferred_from_query";
-    } else {
-      braveSearchLangParam = BRAVE_DEFAULT_SEARCH_LANG;
-      effectiveSearchLang = BRAVE_DEFAULT_SEARCH_LANG;
-      searchLangSource = "fallback_en";
-    }
-  }
-
+  void normalizedQuery;
+  void rawLangHint;
+  // Strict reality mode: never send upstream language hints.
   return {
-    langHint,
-    searchLang: effectiveSearchLang,
-    searchLangSource,
-    braveSearchLangParam,
-    googleHlParam: BRAVE_TO_GOOGLE_HL[effectiveSearchLang],
+    langHint: null,
+    searchLang: "none",
+    searchLangSource: "provider_default",
+    braveSearchLangParam: null,
+    googleHlParam: null,
   };
 }
 
@@ -413,9 +313,6 @@ export async function executeProviderAttempt(
     url.searchParams.set("q", params.q);
     url.searchParams.set("count", "20");
     url.searchParams.set("country", attempt.countryParam || BRAVE_GLOBAL_COUNTRY);
-    if (params.languagePlan.braveSearchLangParam) {
-      url.searchParams.set("search_lang", params.languagePlan.braveSearchLangParam);
-    }
 
     const upstream = await fetchJsonWithTimeout(url.toString(), {
       method: "GET",
@@ -441,7 +338,6 @@ export async function executeProviderAttempt(
     url.searchParams.set("num", "20");
     url.searchParams.set("api_key", attempt.key);
     if (attempt.countryParam) url.searchParams.set("gl", attempt.countryParam);
-    if (params.languagePlan.googleHlParam) url.searchParams.set("hl", params.languagePlan.googleHlParam);
 
     const upstream = await fetchJsonWithTimeout(url.toString(), {
       method: "GET",
@@ -465,7 +361,6 @@ export async function executeProviderAttempt(
   url.searchParams.set("num", "20");
   url.searchParams.set("api_key", attempt.key);
   if (attempt.countryParam) url.searchParams.set("gl", attempt.countryParam);
-  if (params.languagePlan.googleHlParam) url.searchParams.set("hl", params.languagePlan.googleHlParam);
 
   const upstream = await fetchJsonWithTimeout(url.toString(), {
     method: "GET",

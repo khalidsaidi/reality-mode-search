@@ -55,13 +55,12 @@ describe("providerRouter", () => {
     expect(parseCountryHint(null)).toBe(null);
   });
 
-  it("resolves language plan for auto and all", () => {
+  it("disables upstream language hints in strict reality mode", () => {
     const auto = resolveLanguagePlan("pomme", "auto");
-    expect(auto.searchLang).toBeTruthy();
-    expect(["inferred_from_query", "fallback_en"]).toContain(auto.searchLangSource);
-
-    const all = resolveLanguagePlan("pomme", "all");
-    expect(all.langHint).toBe("all");
-    expect(all.searchLangSource).toBe("provider_default");
+    expect(auto.langHint).toBe(null);
+    expect(auto.searchLang).toBe("none");
+    expect(auto.searchLangSource).toBe("provider_default");
+    expect(auto.braveSearchLangParam).toBe(null);
+    expect(auto.googleHlParam).toBe(null);
   });
 });

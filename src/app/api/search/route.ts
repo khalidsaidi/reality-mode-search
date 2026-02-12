@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { inferCountryFromTld } from "@/lib/countryInfer";
-import { detectLang } from "@/lib/lang";
 import { normalizeQuery } from "@/lib/normalize";
 import {
   buildProviderAttempts,
@@ -234,11 +233,11 @@ export async function GET(req: NextRequest) {
       const url = r.url;
       const title = r.title;
       const snippet = r.snippet;
-      const display_url = r.display_url;
-      const domain = getDomain(url);
-      const tld = getTld(domain);
-      const country_inferred = inferCountryFromTld(tld);
-      const lang_detected = detectLang([title, snippet].filter(Boolean).join(" "));
+    const display_url = r.display_url;
+    const domain = getDomain(url);
+    const tld = getTld(domain);
+    const country_inferred = inferCountryFromTld(tld);
+    const lang_detected = "unknown";
 
       return { title, url, snippet, display_url, domain, tld, country_inferred, lang_detected };
     });
