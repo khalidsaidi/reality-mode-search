@@ -17,6 +17,13 @@ Important limitation (current design):
 
 - Results come from **URL-index filtering** (tokens are matched against URLs), not full-text search of page content.
 
+## OWI (Open Web Index) R&D
+
+If you want to go deeper than Common Crawl's public index server (which can be rate-limited/unreliable under load),
+an R&D path is to use OWI datasets and run your own indexing/serving layer.
+
+Notes: `docs/OWI_RND.md`
+
 ## Country Targeting (All 249 ISO Codes)
 
 Search requests require `country=<ISO 3166-1 alpha-2>`.
