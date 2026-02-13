@@ -190,6 +190,8 @@ export async function GET(req: NextRequest) {
     key_source: "user" | "server";
     reason: string;
     exact_country_applied: boolean;
+    country_resolution: "exact" | "proxy" | "global";
+    resolved_country: string | null;
   }> = [];
 
   let selected:
@@ -209,6 +211,8 @@ export async function GET(req: NextRequest) {
           key_source: attempt.keySource,
           reason: "daily_miss_budget_exceeded",
           exact_country_applied: attempt.exactCountryApplied,
+          country_resolution: attempt.countryResolution,
+          resolved_country: attempt.resolvedCountry,
         });
         continue;
       }
@@ -225,6 +229,8 @@ export async function GET(req: NextRequest) {
       key_source: attempt.keySource,
       reason: attempt.reason,
       exact_country_applied: attempt.exactCountryApplied,
+      country_resolution: attempt.countryResolution,
+      resolved_country: attempt.resolvedCountry,
     });
 
     if (!upstream.ok) continue;
@@ -291,6 +297,8 @@ export async function GET(req: NextRequest) {
       provider_route_reason: selected.attempt.reason,
       requested_country_supported_by_provider: selected.attempt.providerSupportsCountry,
       exact_country_applied: selected.attempt.exactCountryApplied,
+      country_resolution: selected.attempt.countryResolution,
+      resolved_country: selected.attempt.resolvedCountry,
       applied_country_param: selected.attempt.countryParam,
       fetched_with: selected.attempt.keySource === "user" ? "user_key" : "server_key",
       deduped: dedupedCount,

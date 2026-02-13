@@ -5,7 +5,7 @@ import { normalizeQuery } from "@/lib/normalize";
 import {
   buildProviderAttempts,
   executeProviderAttempt,
-  hasAnyExactCountrySupport,
+  hasAnyTargetedCountrySupport,
   hasAnyProviderKey,
   parseCountryHint,
   resolveLanguagePlan,
@@ -50,6 +50,8 @@ type ProbeResponse = {
     selected_provider?: string;
     selected_key_source?: "user" | "server";
     exact_country_applied?: boolean;
+    country_resolution?: "exact" | "proxy" | "global";
+    resolved_country?: string | null;
     route_reason?: string;
     attempts: Array<{
       provider: string;
@@ -57,6 +59,8 @@ type ProbeResponse = {
       key_source: "user" | "server";
       reason: string;
       exact_country_applied: boolean;
+      country_resolution: "exact" | "proxy" | "global";
+      resolved_country: string | null;
     }>;
   };
   summary?: ProbeSummary;
@@ -135,7 +139,7 @@ export async function GET(req: NextRequest) {
     },
   };
 
-  const providerSupported = hasAnyExactCountrySupport(country);
+  const providerSupported = hasAnyTargetedCountrySupport(country);
   const attempts = buildProviderAttempts(country, keys);
 
   const base: Omit<ProbeResponse, "status"> = {
@@ -176,7 +180,7 @@ export async function GET(req: NextRequest) {
         status: providerSupported ? "upstream_error" : "unsupported",
         error: providerSupported
           ? "No provider route available with configured keys."
-          : "No exact provider support for this country and no fallback route is configured.",
+          : "No country targeting route available for this country and no fallback route is configured.",
       },
       { status: providerSupported ? 503 : 200 },
     );
@@ -204,6 +208,8 @@ export async function GET(req: NextRequest) {
       key_source: attempt.keySource,
       reason: attempt.reason,
       exact_country_applied: attempt.exactCountryApplied,
+      country_resolution: attempt.countryResolution,
+      resolved_country: attempt.resolvedCountry,
     });
 
     if (!upstream.ok) continue;
@@ -232,7 +238,7 @@ export async function GET(req: NextRequest) {
         status: providerSupported ? "upstream_error" : "unsupported",
         error: providerSupported
           ? "Upstream probe failed across all provider routes."
-          : "Country has no exact support in configured providers, and fallback routes failed.",
+          : "Country has no available targeting route in configured providers, and fallback routes failed.",
       },
       { status: providerSupported ? 503 : 200 },
     );
@@ -266,6 +272,8 @@ export async function GET(req: NextRequest) {
       selected_provider: selected.attempt.provider,
       selected_key_source: selected.attempt.keySource,
       exact_country_applied: selected.attempt.exactCountryApplied,
+      country_resolution: selected.attempt.countryResolution,
+      resolved_country: selected.attempt.resolvedCountry,
       route_reason: selected.attempt.reason,
     },
     summary,

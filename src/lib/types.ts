@@ -1,5 +1,5 @@
 import type { RealityPanel } from "@/lib/reality";
-import type { ProviderId } from "@/lib/providerRouter";
+import type { CountryResolutionMode, ProviderId } from "@/lib/providerRouter";
 
 export type FetchedWith = "server_key" | "user_key" | "none";
 export type CacheMode = "vercel-cdn" | "no-store";
@@ -40,6 +40,8 @@ export type SearchResponse = {
     provider_route_reason: string;
     requested_country_supported_by_provider: boolean;
     exact_country_applied: boolean;
+    country_resolution: CountryResolutionMode;
+    resolved_country: string | null;
     applied_country_param: string | null;
     fetched_with: FetchedWith;
     deduped: number;

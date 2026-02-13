@@ -13,7 +13,8 @@ Next.js app that queries multiple upstream engines (Brave, SerpAPI, SearchApi) a
 
 - Country-hinted requests use an exact-country route when supported:
   - `serpapi` -> `searchapi` -> `brave` (in that order).
-- If no exact-country provider is available, router falls back to global routes:
+- If exact-country is unavailable, router applies deterministic country proxies (for unsupported territories) before global fallback.
+- If no exact/proxy route is available, router falls back to global routes:
   - `serpapi (global)` -> `searchapi (global)` -> `brave country=ALL`.
 - Default query (no country hint) uses global routes only.
 - Strict reality mode: no upstream language hints are sent (`search_lang`/`hl` are omitted).

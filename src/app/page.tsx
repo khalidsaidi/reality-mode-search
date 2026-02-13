@@ -11,7 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toPlainTextFromHtml } from "@/lib/html";
 import { ISO_COUNTRIES } from "@/lib/isoCountries";
-import { hasAnyExactCountrySupport } from "@/lib/providerRouter";
+import { hasAnyTargetedCountrySupport } from "@/lib/providerRouter";
 import type { ErrorResponse, SearchResponse } from "@/lib/types";
 
 const GLOBAL_COMPARE_BUCKETS = [
@@ -51,6 +51,8 @@ type ProbeCountryResponse = {
     selected_provider?: string;
     selected_key_source?: "user" | "server";
     exact_country_applied?: boolean;
+    country_resolution?: "exact" | "proxy" | "global";
+    resolved_country?: string | null;
     route_reason?: string;
   };
   error?: string;
@@ -192,13 +194,13 @@ export default function HomePage() {
     sweepStopRequestedRef.current = false;
 
     const rows: CountrySweepRow[] = ISO_COUNTRIES.map((country) => {
-      const supported = hasAnyExactCountrySupport(country.code);
+      const supported = hasAnyTargetedCountrySupport(country.code);
       return {
         code: country.code,
         name: country.name,
         providerSupported: supported,
         status: "pending",
-        message: supported ? undefined : "No exact country support. Will use global fallback if available."
+        message: supported ? undefined : "No country-targeting route support. Will use global fallback if available."
       };
     });
     setSweepRows(rows);
@@ -225,7 +227,7 @@ export default function HomePage() {
         rows[rowIdx] = {
           ...rows[rowIdx],
           status: "pending",
-          message: "No exact country support. Trying global fallback route."
+          message: "No country-targeting route support. Trying global fallback route."
         };
       }
 
@@ -268,7 +270,7 @@ export default function HomePage() {
               topDomain: body.summary?.top_domains?.[0]?.key,
               topResultTitle: body.summary?.top_results?.[0]?.title,
               message: body.routing?.selected_provider
-                ? `${body.routing.selected_provider}${body.routing.exact_country_applied ? " (exact)" : " (fallback)"}`
+                ? `${body.routing.selected_provider} (${body.routing.country_resolution ?? (body.routing.exact_country_applied ? "exact" : "fallback")}${body.routing.resolved_country ? `:${body.routing.resolved_country}` : ""})`
                 : undefined
             };
           } else {
@@ -369,7 +371,8 @@ export default function HomePage() {
                 <div>
                   <span className="text-muted-foreground">provider:</span>{" "}
                   <span className="font-mono text-xs">
-                    {data.meta.provider} ({data.meta.provider_key_source}, {data.meta.exact_country_applied ? "exact" : "fallback"})
+                    {data.meta.provider} ({data.meta.provider_key_source}, {data.meta.country_resolution}
+                    {data.meta.resolved_country ? `:${data.meta.resolved_country}` : ""})
                   </span>
                 </div>
               </CardContent>

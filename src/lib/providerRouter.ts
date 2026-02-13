@@ -9,6 +9,7 @@ import { ISO_COUNTRY_CODES } from "@/lib/isoCountries";
 export type ProviderId = "brave" | "serpapi" | "searchapi";
 export type ProviderKeySource = "user" | "server";
 export type SearchLangSource = "explicit" | "provider_default" | "inferred_from_query" | "fallback_en";
+export type CountryResolutionMode = "exact" | "proxy" | "global";
 
 export type ProviderKeys = {
   user: Partial<Record<ProviderId, string>>;
@@ -28,9 +29,11 @@ export type ProviderAttempt = {
   key: string;
   keySource: ProviderKeySource;
   requestedCountry: CountryCode | null;
+  resolvedCountry: CountryCode | null;
   countryParam: string | null;
   exactCountryApplied: boolean;
   providerSupportsCountry: boolean;
+  countryResolution: CountryResolutionMode;
   reason: string;
 };
 
@@ -54,6 +57,42 @@ export type ProviderSearchResult = {
 const SERPAPI_UNSUPPORTED_COUNTRIES = new Set<CountryCode>(["AX", "CU", "IR", "KP", "SY"]);
 // SearchApi.io missing: AX, BL, BQ, CW, MF, SS, SX.
 const SEARCHAPI_UNSUPPORTED_COUNTRIES = new Set<CountryCode>(["AX", "BL", "BQ", "CW", "MF", "SS", "SX"]);
+
+// Deterministic country proxies for unsupported regions.
+// These are routing hints only; results remain raw upstream order.
+const PROVIDER_PROXY_COUNTRY: Record<ProviderId, Partial<Record<CountryCode, CountryCode>>> = {
+  serpapi: {
+    AX: "FI",
+    CU: "MX",
+    IR: "TR",
+    KP: "KR",
+    SY: "TR",
+  },
+  searchapi: {
+    AX: "FI",
+    BL: "FR",
+    BQ: "NL",
+    CW: "NL",
+    MF: "FR",
+    SS: "SD",
+    SX: "NL",
+  },
+  brave: {
+    AX: "FI",
+    BL: "FR",
+    BQ: "NL",
+    CW: "NL",
+    MF: "FR",
+    SS: "ZA",
+    SX: "NL",
+    CU: "MX",
+    IR: "TR",
+    KP: "KR",
+    SY: "TR",
+    UM: "US",
+    EH: "ES",
+  },
+};
 
 const EXACT_COUNTRY_PROVIDER_ORDER: readonly ProviderId[] = ["serpapi", "searchapi", "brave"];
 const GLOBAL_PROVIDER_ORDER: readonly ProviderId[] = ["serpapi", "searchapi", "brave"];
@@ -167,13 +206,15 @@ function pushAttempt(
   key: string,
   keySource: ProviderKeySource,
   requestedCountry: CountryCode | null,
+  resolvedCountry: CountryCode | null,
   countryParam: string | null,
   exactCountryApplied: boolean,
   providerSupportsCountry: boolean,
+  countryResolution: CountryResolutionMode,
   reason: string,
 ) {
-  const signature = `${provider}|${keySource}|${requestedCountry ?? "none"}|${countryParam ?? "none"}|${exactCountryApplied ? 1 : 0}`;
-  if (out.some((a) => `${a.provider}|${a.keySource}|${a.requestedCountry ?? "none"}|${a.countryParam ?? "none"}|${a.exactCountryApplied ? 1 : 0}` === signature)) {
+  const signature = `${provider}|${keySource}|${requestedCountry ?? "none"}|${resolvedCountry ?? "none"}|${countryParam ?? "none"}|${countryResolution}`;
+  if (out.some((a) => `${a.provider}|${a.keySource}|${a.requestedCountry ?? "none"}|${a.resolvedCountry ?? "none"}|${a.countryParam ?? "none"}|${a.countryResolution}` === signature)) {
     return;
   }
 
@@ -182,9 +223,11 @@ function pushAttempt(
     key,
     keySource,
     requestedCountry,
+    resolvedCountry,
     countryParam,
     exactCountryApplied,
     providerSupportsCountry,
+    countryResolution,
     reason,
   });
 }
@@ -208,6 +251,26 @@ export function hasAnyExactCountrySupport(country: CountryCode): boolean {
   );
 }
 
+function resolveProxyCountry(provider: ProviderId, country: CountryCode): CountryCode | null {
+  const mapped = PROVIDER_PROXY_COUNTRY[provider][country];
+  if (!mapped) return null;
+  if (!providerSupportsCountry(provider, mapped)) return null;
+  return mapped;
+}
+
+export function hasAnyTargetedCountrySupport(country: CountryCode): boolean {
+  return (
+    hasAnyExactCountrySupport(country) ||
+    Boolean(resolveProxyCountry("brave", country)) ||
+    Boolean(resolveProxyCountry("serpapi", country)) ||
+    Boolean(resolveProxyCountry("searchapi", country))
+  );
+}
+
+function toCountryParam(provider: ProviderId, country: CountryCode): string {
+  return provider === "brave" ? country : country.toLowerCase();
+}
+
 export function resolveLanguagePlan(normalizedQuery: string, rawLangHint: string | null): SearchLanguagePlan {
   void normalizedQuery;
   void rawLangHint;
@@ -227,9 +290,11 @@ export function buildProviderAttempts(countryHint: CountryCode | null, keys: Pro
   const addProviderAttempts = (
     provider: ProviderId,
     requestedCountry: CountryCode | null,
+    resolvedCountry: CountryCode | null,
     countryParam: string | null,
     exactCountryApplied: boolean,
     providerSupports: boolean,
+    countryResolution: CountryResolutionMode,
     reason: string,
   ) => {
     const keyCandidates = keyCandidatesForProvider(provider, keys);
@@ -240,9 +305,11 @@ export function buildProviderAttempts(countryHint: CountryCode | null, keys: Pro
         keyCandidate.key,
         keyCandidate.keySource,
         requestedCountry,
+        resolvedCountry,
         countryParam,
         exactCountryApplied,
         providerSupports,
+        countryResolution,
         reason,
       );
     }
@@ -252,14 +319,33 @@ export function buildProviderAttempts(countryHint: CountryCode | null, keys: Pro
     for (const provider of EXACT_COUNTRY_PROVIDER_ORDER) {
       if (!providerSupportsCountry(provider, countryHint)) continue;
 
-      const countryParam = provider === "brave" ? countryHint : countryHint.toLowerCase();
+      const countryParam = toCountryParam(provider, countryHint);
       addProviderAttempts(
         provider,
+        countryHint,
         countryHint,
         countryParam,
         true,
         true,
+        "exact",
         "exact_country_match",
+      );
+    }
+
+    for (const provider of EXACT_COUNTRY_PROVIDER_ORDER) {
+      if (providerSupportsCountry(provider, countryHint)) continue;
+      const proxyCountry = resolveProxyCountry(provider, countryHint);
+      if (!proxyCountry) continue;
+      const countryParam = toCountryParam(provider, proxyCountry);
+      addProviderAttempts(
+        provider,
+        countryHint,
+        proxyCountry,
+        countryParam,
+        false,
+        false,
+        "proxy",
+        "proxy_country_match",
       );
     }
 
@@ -268,9 +354,11 @@ export function buildProviderAttempts(countryHint: CountryCode | null, keys: Pro
       addProviderAttempts(
         provider,
         countryHint,
+        null,
         countryParam,
         false,
         providerSupportsCountry(provider, countryHint),
+        "global",
         "global_fallback",
       );
     }
@@ -283,9 +371,11 @@ export function buildProviderAttempts(countryHint: CountryCode | null, keys: Pro
     addProviderAttempts(
       provider,
       null,
+      null,
       countryParam,
       false,
       true,
+      "global",
       "global_default",
     );
   }
