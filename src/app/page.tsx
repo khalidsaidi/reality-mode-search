@@ -11,11 +11,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toPlainTextFromHtml } from "@/lib/html";
 import { ISO_COUNTRIES } from "@/lib/isoCountries";
-import { hasAnyTargetedCountrySupport } from "@/lib/providerRouter";
+import { resolveCountryTarget } from "@/lib/countryTargeting";
 import type { ErrorResponse, SearchResponse } from "@/lib/types";
 
 const GLOBAL_COMPARE_BUCKETS = [
-  { id: "all", label: "Worldwide (ALL)", countryHint: null },
   { id: "fr", label: "France (FR)", countryHint: "FR" },
   { id: "in", label: "India (IN)", countryHint: "IN" },
   { id: "br", label: "Brazil (BR)", countryHint: "BR" },
@@ -49,7 +48,7 @@ type ProbeCountryResponse = {
   };
   routing?: {
     selected_provider?: string;
-    selected_key_source?: "user" | "server";
+    selected_key_source?: "none";
     exact_country_applied?: boolean;
     country_resolution?: "exact" | "proxy" | "global";
     resolved_country?: string | null;
@@ -103,15 +102,7 @@ export default function HomePage() {
       if (params.countryHint) url.searchParams.set("country", params.countryHint);
 
       const res = await fetch(url.toString(), {
-        method: "GET",
-        headers:
-          params.userBraveKey || params.userSerpApiKey || params.userSearchApiKey
-            ? {
-                ...(params.userBraveKey ? { "x-user-brave-key": params.userBraveKey } : {}),
-                ...(params.userSerpApiKey ? { "x-user-serpapi-key": params.userSerpApiKey } : {}),
-                ...(params.userSearchApiKey ? { "x-user-searchapi-key": params.userSearchApiKey } : {}),
-              }
-            : undefined,
+        method: "GET"
       });
 
       const json = (await res.json().catch(() => null)) as SearchResponse | ErrorResponse | null;
@@ -173,10 +164,7 @@ export default function HomePage() {
       GLOBAL_COMPARE_BUCKETS.map(async (bucket) => {
         const state = await fetchSearch({
           normalizedQuery: lastSubmit.normalizedQuery,
-          countryHint: bucket.countryHint,
-          userBraveKey: lastSubmit.userBraveKey,
-          userSerpApiKey: lastSubmit.userSerpApiKey,
-          userSearchApiKey: lastSubmit.userSearchApiKey,
+          countryHint: bucket.countryHint
         });
         return { bucket, state } satisfies GlobalCompareResult;
       }),
@@ -194,7 +182,9 @@ export default function HomePage() {
     sweepStopRequestedRef.current = false;
 
     const rows: CountrySweepRow[] = ISO_COUNTRIES.map((country) => {
-      const supported = hasAnyTargetedCountrySupport(country.code);
+      // Country targets are deterministic for all ISO entries (with proxies for missing ccTLDs).
+      void resolveCountryTarget(country.code);
+      const supported = true;
       return {
         code: country.code,
         name: country.name,
@@ -237,15 +227,7 @@ export default function HomePage() {
         url.searchParams.set("country", country.code);
 
         const res = await fetch(url.toString(), {
-          method: "GET",
-          headers:
-            lastSubmit.userBraveKey || lastSubmit.userSerpApiKey || lastSubmit.userSearchApiKey
-              ? {
-                  ...(lastSubmit.userBraveKey ? { "x-user-brave-key": lastSubmit.userBraveKey } : {}),
-                  ...(lastSubmit.userSerpApiKey ? { "x-user-serpapi-key": lastSubmit.userSerpApiKey } : {}),
-                  ...(lastSubmit.userSearchApiKey ? { "x-user-searchapi-key": lastSubmit.userSearchApiKey } : {}),
-                }
-              : undefined
+          method: "GET"
         });
 
         if (!res.ok) {
@@ -299,7 +281,7 @@ export default function HomePage() {
         supportedTotal: supportedCountries.length
       });
 
-      // Brave free plan has strict per-second rate limits.
+      // Be gentle to the public index server.
       await delay(COUNTRY_SWEEP_DELAY_MS);
     }
 
@@ -343,7 +325,7 @@ export default function HomePage() {
                 </div>
               ) : null}
               {error.status === 503 ? (
-                <div>Tip: enable “Use my own provider keys” to bypass shared budget/caching.</div>
+                <div>Tip: the upstream index can be temporarily unavailable. Try again later.</div>
               ) : null}
             </AlertDescription>
           </Alert>
@@ -438,8 +420,8 @@ export default function HomePage() {
                 <div className="grid gap-1">
                   <CardTitle>All Countries Sweep (249)</CardTitle>
                 <p className="text-xs text-muted-foreground">
-                  Tests every ISO country through the multi-provider router. Countries without exact support use global
-                  fallback routes.
+                  Tests every ISO country via ccTLD targeting (with deterministic proxies for ISO entries without a
+                  delegated ccTLD).
                 </p>
                 </div>
                 <div className="flex gap-2">
@@ -455,7 +437,7 @@ export default function HomePage() {
               </CardHeader>
               <CardContent className="grid gap-3">
                 <p className="text-xs text-muted-foreground">
-                  BYO keys are optional. Without BYO, this can consume shared server-key budget.
+                  Sweep runs sequentially with delay to avoid overloading the public index server.
                 </p>
 
                 {sweepProgress ? (

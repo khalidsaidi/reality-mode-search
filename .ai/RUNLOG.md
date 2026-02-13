@@ -257,3 +257,28 @@ Compare with no hint:
 vercel cache purge --type cdn --yes
 curl -sS "https://reality-mode-search.vercel.app/api/search?q=plage%20david&lang=all" | jq '.lens, .reality.histograms.lang_detected[0:5]'
 ```
+
+### 2026-02-13: Pivot To Open Data (Common Crawl)
+
+Switched the backend to the Common Crawl URL index (CDX API). No provider keys are required.
+Note: earlier Brave/SerpAPI/SearchApi notes above are historical (superseded).
+
+Local checks:
+
+```bash
+npm run lint
+npm run typecheck
+npm test
+npm run build
+
+PORT=3005 npm run start -- -p 3005
+curl -sS "http://localhost:3005/api/search?q=pomme&country=FR" | jq '.meta.provider, .meta.applied_country_param, .results[0:5][].url'
+curl -sS "http://localhost:3005/api/compare-country?q=pomme&country=FR&debug=1" | jq '.debug.request_url'
+```
+
+Deployed checks:
+
+```bash
+curl -sS -D - "https://reality-mode-search.vercel.app/api/search?q=pomme&country=FR" -o /tmp/rms_cc_pomme_fr.json
+curl -sS -D - "https://reality-mode-search.vercel.app/api/search?q=pomme&country=FR" -o /tmp/rms_cc_pomme_fr2.json
+```

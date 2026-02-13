@@ -1,8 +1,19 @@
 # Decisions
 
-- Deploy target: Vercel only. No Firestore/GCP/external DB for MVP.
-- Caching: Vercel CDN caching via `CDN-Cache-Control` only for server-owned Brave key responses; BYO key responses are always `private, no-store`.
+## Current (Open Data / Common Crawl)
+
+- Provider: Common Crawl URL index (CDX API). No API keys.
+- Country targeting: ISO alpha-2 -> ccTLD target, applied via CDX `url=.tld&matchType=domain`.
+  - Override: `GB -> .uk`
+  - Deterministic proxies for ISO entries without a delegated ccTLD: `BQ->NL`, `BL->FR`, `MF->FR`, `UM->US`, `EH->ES`
+- Caching: Vercel CDN caching via `CDN-Cache-Control` for successful responses (long TTL). Upstream/budget errors use short CDN cache to avoid hammering.
 - "Reality Mode" invariant: Upstream order is preserved; only URL canonicalization + stable dedup is applied.
-- Global baseline: Brave Web Search defaults `country` to `US` when omitted, so we force `country=ALL` when no country hint is selected (and ignore provider-unsupported ISO codes).
-- Language baseline: Brave Web Search defaults `search_lang` to `en` when omitted. Default behavior is `lang=auto` which sends an explicit `search_lang`, inferring it from the query language (franc ISO-639-3) when possible, otherwise falling back to `en` (geo-neutral, avoids hidden English-only defaults for non-English queries). Users can set `lang=all` to omit the hint (provider default), or choose an explicit Brave `search_lang` code.
-- Fairness inspection: added a separate per-country probe endpoint (`/api/compare-country`) and UI sweep across all 249 ISO countries. This probe requires BYO key and is always `no-store`, so high-cardinality compare traffic does not consume shared server-key cache budget.
+
+## Superseded (Brave/SerpAPI/SearchApi Prototype)
+
+- Deploy target: Vercel only. No Firestore/GCP/external DB for MVP.
+- Caching: Vercel CDN caching via `CDN-Cache-Control` only for server-owned provider key responses; BYO key responses were always `private, no-store`.
+- Global baseline: Brave Web Search defaulted `country` to `US` when omitted, so we forced a global mode.
+- Language baseline: Brave defaulted `search_lang` to `en` when omitted; we experimented with explicit language hints to avoid hidden defaults.
+- Fairness inspection: per-country probe endpoint (`/api/compare-country`) and UI sweep across all 249 ISO countries.
+

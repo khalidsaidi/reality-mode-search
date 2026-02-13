@@ -3,13 +3,13 @@ import {
   BRAVE_SUPPORTED_COUNTRIES,
   type BraveSearchCountry,
 } from "@/lib/brave";
+import type { CountryResolutionMode } from "@/lib/countryResolution";
 import type { CountryCode } from "@/lib/isoCountries";
 import { ISO_COUNTRY_CODES } from "@/lib/isoCountries";
 
 export type ProviderId = "brave" | "serpapi" | "searchapi";
 export type ProviderKeySource = "user" | "server";
 export type SearchLangSource = "explicit" | "provider_default" | "inferred_from_query" | "fallback_en";
-export type CountryResolutionMode = "exact" | "proxy" | "global";
 
 export type ProviderKeys = {
   user: Partial<Record<ProviderId, string>>;

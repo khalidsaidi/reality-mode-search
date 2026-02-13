@@ -1,8 +1,10 @@
 import type { RealityPanel } from "@/lib/reality";
-import type { CountryResolutionMode, ProviderId } from "@/lib/providerRouter";
+import type { CountryResolutionMode } from "@/lib/countryResolution";
 
 export type FetchedWith = "server_key" | "user_key" | "none";
 export type CacheMode = "vercel-cdn" | "no-store";
+export type ProviderId = "commoncrawl";
+export type ProviderKeySource = "none";
 
 export type SearchResult = {
   title: string;
@@ -36,7 +38,7 @@ export type SearchResponse = {
   meta: {
     provider: ProviderId;
     providers_tried: string[];
-    provider_key_source: "user" | "server";
+    provider_key_source: ProviderKeySource;
     provider_route_reason: string;
     requested_country_supported_by_provider: boolean;
     exact_country_applied: boolean;

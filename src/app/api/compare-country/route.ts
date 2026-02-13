@@ -1,16 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { searchCommonCrawl } from "@/lib/commonCrawl";
+import { parseCountryCode, resolveCountryTarget } from "@/lib/countryTargeting";
 import { inferCountryFromTld } from "@/lib/countryInfer";
 import { normalizeQuery } from "@/lib/normalize";
-import {
-  buildProviderAttempts,
-  executeProviderAttempt,
-  hasAnyTargetedCountrySupport,
-  hasAnyProviderKey,
-  parseCountryHint,
-  resolveLanguagePlan,
-  type SearchLangSource,
-} from "@/lib/providerRouter";
 import { computeRealityPanel } from "@/lib/reality";
 import { getDomain, getTld } from "@/lib/tld";
 import type { CountryCode } from "@/lib/isoCountries";
@@ -19,6 +12,18 @@ import { dedupByCanonicalUrl } from "@/lib/url";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const DEFAULT_CACHE_TTL_SECONDS = 604800; // 7 days
+const DEFAULT_SWR_SECONDS = 0;
+const DEFAULT_STALE_IF_ERROR_SECONDS = 604800; // 7 days
+const DEFAULT_DAILY_MISS_BUDGET = 1500;
+
+// Allow a full 249 sweep from one client within an hour, but still prevent abuse.
+const COMPARE_LIMIT = 400;
+const COMPARE_WINDOW_MS = 60 * 60 * 1000;
+const compareBuckets = new Map<string, number[]>();
+
+let openDataDailyMissState: { date: string; misses: number } = { date: "", misses: 0 };
 
 type ProbeSummary = {
   returned: number;
@@ -31,7 +36,6 @@ type ProbeSummary = {
     lang_detected: string;
   }>;
   top_domains: Array<{ key: string; count: number; pct: number }>;
-  lang_histogram: Array<{ key: string; count: number; pct: number }>;
 };
 
 type ProbeResponse = {
@@ -44,11 +48,11 @@ type ProbeResponse = {
     country_hint: CountryCode;
     lang_hint: string | null;
     search_lang: string;
-    search_lang_source: SearchLangSource;
+    search_lang_source: "provider_default";
   };
   routing: {
     selected_provider?: string;
-    selected_key_source?: "user" | "server";
+    selected_key_source?: "none";
     exact_country_applied?: boolean;
     country_resolution?: "exact" | "proxy" | "global";
     resolved_country?: string | null;
@@ -56,7 +60,7 @@ type ProbeResponse = {
     attempts: Array<{
       provider: string;
       status: number;
-      key_source: "user" | "server";
+      key_source: "none";
       reason: string;
       exact_country_applied: boolean;
       country_resolution: "exact" | "proxy" | "global";
@@ -65,37 +69,63 @@ type ProbeResponse = {
   };
   summary?: ProbeSummary;
   error?: string;
+  debug?: {
+    index: string;
+    request_url: string;
+    upstream_status: number;
+  };
 };
+
+function getClientIp(req: NextRequest): string {
+  const xf = req.headers.get("x-forwarded-for");
+  if (xf) return xf.split(",")[0]?.trim() || "unknown";
+  const xr = req.headers.get("x-real-ip");
+  if (xr) return xr.trim();
+  return "unknown";
+}
+
+function envInt(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+function todayUtc(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function consumeOpenDataMissBudget(dailyMissBudget: number): boolean {
+  const today = todayUtc();
+  if (openDataDailyMissState.date !== today) {
+    openDataDailyMissState = { date: today, misses: 0 };
+  }
+
+  if (openDataDailyMissState.misses >= dailyMissBudget) return false;
+  openDataDailyMissState.misses += 1;
+  return true;
+}
+
+function rateLimitCompare(ip: string, nowMs = Date.now()): { allowed: boolean; retryAfterSeconds: number } {
+  const key = ip || "unknown";
+  const times = compareBuckets.get(key) ?? [];
+  const cutoff = nowMs - COMPARE_WINDOW_MS;
+  while (times.length > 0 && times[0] < cutoff) times.shift();
+
+  if (times.length >= COMPARE_LIMIT) {
+    const oldest = times[0] ?? nowMs;
+    const retryAfterSeconds = Math.max(1, Math.ceil((oldest + COMPARE_WINDOW_MS - nowMs) / 1000));
+    compareBuckets.set(key, times);
+    return { allowed: false, retryAfterSeconds };
+  }
+
+  times.push(nowMs);
+  compareBuckets.set(key, times);
+  return { allowed: true, retryAfterSeconds: 0 };
+}
 
 function json<T>(body: T, init?: ResponseInit) {
   return NextResponse.json(body, init);
-}
-
-function envBool(name: string, fallback: boolean): boolean {
-  const raw = process.env[name];
-  if (raw == null) return fallback;
-  return raw.toLowerCase() === "true";
-}
-
-function setVaryUserKeys(res: NextResponse) {
-  const headers = ["x-user-brave-key", "x-user-serpapi-key", "x-user-searchapi-key"];
-  const existing = res.headers.get("Vary");
-  if (!existing) {
-    res.headers.set("Vary", headers.join(", "));
-    return;
-  }
-  if (existing.trim() === "*") return;
-
-  const parts = existing
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
-
-  const merged = [...parts];
-  for (const h of headers) {
-    if (!merged.includes(h)) merged.push(h);
-  }
-  res.headers.set("Vary", merged.join(", "));
 }
 
 function setNoStore(res: NextResponse) {
@@ -103,151 +133,127 @@ function setNoStore(res: NextResponse) {
   res.headers.set("Pragma", "no-cache");
 }
 
+function setServerCdnCache(res: NextResponse, ttlSeconds: number, swrSeconds: number, staleIfErrorSeconds: number) {
+  res.headers.set("Cache-Control", "max-age=0");
+  res.headers.set(
+    "CDN-Cache-Control",
+    `s-maxage=${ttlSeconds}, stale-while-revalidate=${swrSeconds}, stale-if-error=${staleIfErrorSeconds}`,
+  );
+}
+
+function setServerShortCdnCache(res: NextResponse) {
+  res.headers.set("Cache-Control", "max-age=0");
+  res.headers.set("CDN-Cache-Control", "s-maxage=60");
+}
+
 export async function GET(req: NextRequest) {
+  const ip = getClientIp(req);
+  const rl = rateLimitCompare(ip);
+  if (!rl.allowed) {
+    const res = json({ error: "Rate limit exceeded. Try later." }, { status: 429 });
+    res.headers.set("Retry-After", String(rl.retryAfterSeconds));
+    setNoStore(res);
+    return res;
+  }
+
   const reqUrl = new URL(req.url);
   const qRaw = reqUrl.searchParams.get("q") ?? "";
   const normalizedQ = normalizeQuery(qRaw);
-  const country = parseCountryHint(reqUrl.searchParams.get("country"));
+  const country = parseCountryCode(reqUrl.searchParams.get("country"));
+  const debug = reqUrl.searchParams.get("debug") === "1";
 
   if (!normalizedQ) {
     const res = json({ error: "Missing required query parameter: q" }, { status: 400 });
     setNoStore(res);
-    setVaryUserKeys(res);
     return res;
   }
 
   if (!country) {
     const res = json({ error: "Missing or invalid required country code." }, { status: 400 });
     setNoStore(res);
-    setVaryUserKeys(res);
     return res;
   }
 
-  const languagePlan = resolveLanguagePlan(normalizedQ, reqUrl.searchParams.get("lang"));
-  const enableByo = envBool("ENABLE_BYO_KEY", true);
+  const target = resolveCountryTarget(country);
+  const tokens = normalizedQ
+    .split(" ")
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .slice(0, 5);
 
-  const keys = {
-    user: {
-      brave: enableByo ? (req.headers.get("x-user-brave-key") ?? "").trim() : "",
-      serpapi: enableByo ? (req.headers.get("x-user-serpapi-key") ?? "").trim() : "",
-      searchapi: enableByo ? (req.headers.get("x-user-searchapi-key") ?? "").trim() : "",
-    },
-    server: {
-      brave: (process.env.BRAVE_API_KEY ?? "").trim(),
-      serpapi: (process.env.SERPAPI_API_KEY ?? "").trim(),
-      searchapi: (process.env.SEARCHAPI_API_KEY ?? "").trim(),
-    },
-  };
-
-  const providerSupported = hasAnyTargetedCountrySupport(country);
-  const attempts = buildProviderAttempts(country, keys);
+  const ttlSeconds = envInt("CACHE_TTL_SECONDS", DEFAULT_CACHE_TTL_SECONDS);
+  const swrSeconds = envInt("SWR_SECONDS", DEFAULT_SWR_SECONDS);
+  const staleIfErrorSeconds = envInt("STALE_IF_ERROR_SECONDS", DEFAULT_STALE_IF_ERROR_SECONDS);
+  const dailyMissBudget = envInt("DAILY_MISS_BUDGET", DEFAULT_DAILY_MISS_BUDGET);
 
   const base: Omit<ProbeResponse, "status"> = {
     query: qRaw,
     normalized_query: normalizedQ,
     country,
-    provider_supported: providerSupported,
+    provider_supported: true,
     lens: {
       country_hint: country,
-      lang_hint: languagePlan.langHint,
-      search_lang: languagePlan.searchLang,
-      search_lang_source: languagePlan.searchLangSource,
+      lang_hint: null,
+      search_lang: "none",
+      search_lang_source: "provider_default",
     },
     routing: {
       attempts: [],
     },
   };
 
-  if (!hasAnyProviderKey(keys)) {
+  const budgetAllowed = consumeOpenDataMissBudget(dailyMissBudget);
+  if (!budgetAllowed) {
     const res = json<ProbeResponse>(
       {
         ...base,
         status: "upstream_error",
-        error:
-          "No provider key configured. Add BRAVE_API_KEY, SERPAPI_API_KEY, SEARCHAPI_API_KEY, or send x-user-* headers.",
+        error: "Live refresh paused/throttled to stay sustainable. Try later.",
       },
       { status: 503 },
     );
-    setNoStore(res);
-    setVaryUserKeys(res);
+    setServerShortCdnCache(res);
     return res;
   }
 
-  if (attempts.length === 0) {
+  const upstream = await searchCommonCrawl({ target, query_tokens: tokens, limit: 20 });
+  base.routing.attempts.push({
+    provider: "commoncrawl",
+    status: upstream.status,
+    key_source: "none",
+    reason: target.country_resolution === "proxy" ? "proxy_tld" : "exact_tld",
+    exact_country_applied: target.country_resolution === "exact",
+    country_resolution: target.country_resolution,
+    resolved_country: target.resolved_country,
+  });
+
+  if (!upstream.ok) {
     const res = json<ProbeResponse>(
       {
         ...base,
-        status: providerSupported ? "upstream_error" : "unsupported",
-        error: providerSupported
-          ? "No provider route available with configured keys."
-          : "No country targeting route available for this country and no fallback route is configured.",
+        status: "upstream_error",
+        error: "Common Crawl index temporarily unavailable. Try later.",
+        ...(debug ? { debug: { index: upstream.index, request_url: upstream.request_url, upstream_status: upstream.status } } : {}),
       },
-      { status: providerSupported ? 503 : 200 },
+      { status: 503 },
     );
-    setNoStore(res);
-    setVaryUserKeys(res);
+    setServerShortCdnCache(res);
     return res;
   }
 
-  let selected:
-    | {
-        attempt: (typeof attempts)[number];
-        mapped: SearchResult[];
-      }
-    | null = null;
+  const mapped: SearchResult[] = upstream.results.map((r) => {
+    const url = r.url;
+    const title = r.title;
+    const snippet = r.snippet;
+    const display_url = r.display_url;
+    const domain = getDomain(url);
+    const tld = getTld(domain);
+    const country_inferred = inferCountryFromTld(tld);
+    const lang_detected = r._cc.languages?.split(",")[0]?.trim() || "unknown";
+    return { title, url, snippet, display_url, domain, tld, country_inferred, lang_detected };
+  });
 
-  for (const attempt of attempts) {
-    const upstream = await executeProviderAttempt(attempt, {
-      q: normalizedQ,
-      languagePlan,
-    });
-
-    base.routing.attempts.push({
-      provider: attempt.provider,
-      status: upstream.status,
-      key_source: attempt.keySource,
-      reason: attempt.reason,
-      exact_country_applied: attempt.exactCountryApplied,
-      country_resolution: attempt.countryResolution,
-      resolved_country: attempt.resolvedCountry,
-    });
-
-    if (!upstream.ok) continue;
-
-    const mapped: SearchResult[] = upstream.results.map((r) => {
-      const url = r.url;
-      const title = r.title;
-      const snippet = r.snippet;
-      const display_url = r.display_url;
-      const domain = getDomain(url);
-      const tld = getTld(domain);
-      const country_inferred = inferCountryFromTld(tld);
-      const lang_detected = "unknown";
-
-      return { title, url, snippet, display_url, domain, tld, country_inferred, lang_detected };
-    });
-
-    selected = { attempt, mapped };
-    break;
-  }
-
-  if (!selected) {
-    const res = json<ProbeResponse>(
-      {
-        ...base,
-        status: providerSupported ? "upstream_error" : "unsupported",
-        error: providerSupported
-          ? "Upstream probe failed across all provider routes."
-          : "Country has no available targeting route in configured providers, and fallback routes failed.",
-      },
-      { status: providerSupported ? 503 : 200 },
-    );
-    setNoStore(res);
-    setVaryUserKeys(res);
-    return res;
-  }
-
-  const deduped = dedupByCanonicalUrl(selected.mapped);
+  const deduped = dedupByCanonicalUrl(mapped);
   const reality = computeRealityPanel(deduped);
 
   const summary: ProbeSummary = {
@@ -261,7 +267,6 @@ export async function GET(req: NextRequest) {
       lang_detected: r.lang_detected,
     })),
     top_domains: reality.histograms.top_domains.slice(0, 3),
-    lang_histogram: reality.histograms.lang_detected.slice(0, 5),
   };
 
   const res = json<ProbeResponse>({
@@ -269,16 +274,17 @@ export async function GET(req: NextRequest) {
     status: "ok",
     routing: {
       ...base.routing,
-      selected_provider: selected.attempt.provider,
-      selected_key_source: selected.attempt.keySource,
-      exact_country_applied: selected.attempt.exactCountryApplied,
-      country_resolution: selected.attempt.countryResolution,
-      resolved_country: selected.attempt.resolvedCountry,
-      route_reason: selected.attempt.reason,
+      selected_provider: "commoncrawl",
+      selected_key_source: "none",
+      exact_country_applied: target.country_resolution === "exact",
+      country_resolution: target.country_resolution,
+      resolved_country: target.resolved_country,
+      route_reason: target.country_resolution === "proxy" ? "proxy_tld" : "exact_tld",
     },
     summary,
+    ...(debug ? { debug: { index: upstream.index, request_url: upstream.request_url, upstream_status: upstream.status } } : {}),
   });
-  setNoStore(res);
-  setVaryUserKeys(res);
+
+  setServerCdnCache(res, ttlSeconds, swrSeconds, staleIfErrorSeconds);
   return res;
 }

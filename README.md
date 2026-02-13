@@ -1,6 +1,6 @@
 # Reality Mode Search
 
-Next.js app that queries multiple upstream engines (Brave, SerpAPI, SearchApi) and shows results in upstream order (with stable URL canonicalization + dedup only).
+Next.js app deployed on Vercel that queries **open data** (Common Crawl URL index) and shows results in upstream order (with stable URL canonicalization + dedup only).
 
 ## Reality Mode Rules (No-Drift)
 
@@ -9,26 +9,34 @@ Next.js app that queries multiple upstream engines (Brave, SerpAPI, SearchApi) a
   - URL canonicalization (remove fragments + common tracking params)
   - Stable dedup by canonical URL (keep first occurrence)
 
-## Multi-Engine Routing
+## Open Data Provider (Common Crawl)
 
-- Country-hinted requests use an exact-country route when supported:
-  - `serpapi` -> `searchapi` -> `brave` (in that order).
-- If exact-country is unavailable, router applies deterministic country proxies (for unsupported territories) before global fallback.
-- If no exact/proxy route is available, router falls back to global routes:
-  - `serpapi (global)` -> `searchapi (global)` -> `brave country=ALL`.
-- Default query (no country hint) uses global routes only.
-- Strict reality mode: no upstream language hints are sent (`search_lang`/`hl` are omitted).
+This project uses the **Common Crawl Index Server (CDX API)**.
 
-## Caching / Fairness Model (Sustainability)
+Important limitation (current design):
 
-Two key modes:
+- Results come from **URL-index filtering** (tokens are matched against URLs), not full-text search of page content.
 
-- **Server key** (`BRAVE_API_KEY`, `SERPAPI_API_KEY`, `SEARCHAPI_API_KEY`): responses are CDN-cacheable via `CDN-Cache-Control` with long TTL.
-  - Goal: reduce upstream calls so the public demo stays free.
-- **BYO key** (client sends any `x-user-*` key header, gated by `ENABLE_BYO_KEY=true`): responses are `private, no-store`.
-  - Goal: prevent user-supplied keys from subsidizing other users via shared CDN cache.
+## Country Targeting (All 249 ISO Codes)
 
-There is also a soft **daily miss budget** guard (in-memory per instance). Combined with CDN caching this is sufficient for an MVP.
+Search requests require `country=<ISO 3166-1 alpha-2>`.
+
+Country targeting is done by mapping the ISO code to a ccTLD pattern:
+
+- Default: `XX -> .xx`
+- Override: `GB -> .uk`
+- Deterministic proxies for ISO entries without a delegated ccTLD:
+  - `BQ -> .nl`, `BL -> .fr`, `MF -> .fr`, `UM -> .us`, `EH -> .es`
+
+The resolved target is applied via CDX: `url=.tld&matchType=domain`.
+
+## Caching / Sustainability
+
+- Responses are CDN-cacheable via `CDN-Cache-Control` with long TTL.
+- Soft **daily miss budget** guard (in-memory per instance).
+- Per-IP rate limiting:
+  - `/api/search`: 30 requests/hour
+  - `/api/compare-country`: 400 requests/hour (enough for a 249-country sweep)
 
 ## Dev
 
@@ -41,29 +49,23 @@ npm run dev
 
 Set in Vercel (or `.env.local` locally):
 
-- `BRAVE_API_KEY` (optional but recommended for public demo)
-- `SERPAPI_API_KEY` (recommended for broad country coverage)
-- `SEARCHAPI_API_KEY` (recommended as fallback coverage)
+- `COMMONCRAWL_INDEX_BASE_URL=http://index.commoncrawl.org` (default)
+- `COMMONCRAWL_INDEX_ID` (optional pin; defaults to latest)
 - `CACHE_TTL_SECONDS=604800`
 - `SWR_SECONDS=0`
 - `STALE_IF_ERROR_SECONDS=604800`
 - `DAILY_MISS_BUDGET=1500`
-- `ENABLE_BYO_KEY=true`
 
-## Verify CDN Caching (Server Key Path)
+## Verify CDN Caching
 
-1. Call `/api/search?q=hello` twice (without BYO key header).
+1. Call `/api/search?q=hello&country=FR` twice.
 2. The second response should be served from cache (look for `x-vercel-cache=HIT` on Vercel).
-
-BYO key requests (`x-user-brave-key`, `x-user-serpapi-key`, `x-user-searchapi-key`) should never be cached (they are `private, no-store`).
 
 ## Fairness Inspection Tools
 
-- **Global Compare**: runs the same query across a small fixed set of country hints (`ALL`, `FR`, `IN`, `BR`, `JP`, `US`) and shows each bucket independently.
+- **Global Compare**: runs the same query across a small fixed set of country hints and shows each bucket independently.
 - **All Countries Sweep (249)**: runs across all ISO countries in the UI.
-  - Countries with no exact support are still probed via global fallback routes.
   - Probes are sequential with delay to avoid triggering provider rate limits.
-  - BYO keys are optional, but recommended to avoid exhausting shared server-key budget.
 
 ## Connect GitHub to Vercel
 
